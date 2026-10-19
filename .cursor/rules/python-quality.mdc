@@ -1,0 +1,17 @@
+---
+description: Python 3.12 quality bar for new code
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# Python quality
+
+- Target Python 3.12. Annotate public functions.
+- New behaviour ships with a test that passes without a live model.
+- Mark tests that call a model or external service with `@pytest.mark.integration`.
+- Run `uv run ruff check .`, `uv run ruff format --check .`, `uv run pyright`, and `uv run pytest` before handing work back.
+
+```python
+def test_route_selects_research() -> None:
+    assert route("find sources") == "research"
+```

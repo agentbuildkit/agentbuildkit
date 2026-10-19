@@ -1,0 +1,25 @@
+---
+description: Microsoft Agent Framework is the only agent framework for this repository
+alwaysApply: true
+---
+
+# Agent Framework
+
+Microsoft Agent Framework 1.x is the agent framework for this repository.
+
+- Build agents with `agent_framework.Agent` and `OpenAIChatClient` from `agent_framework.openai`.
+- Compose explicit flows with `WorkflowBuilder`. Use `SequentialBuilder`, `ConcurrentBuilder`, `HandoffBuilder`, `GroupChatBuilder`, or `MagenticBuilder` when one of those patterns matches the task.
+- Put reusable code in `src/agent_platform`. Put client-specific agents in `src/organisation`.
+- Use a Pydantic model for agent and workflow inputs and outputs.
+- Use ordinary Python for routing, validation, and aggregation when the step does not need model judgment.
+
+```python
+from pydantic import BaseModel
+
+
+class TaskResult(BaseModel):
+    summary: str
+    confidence: float
+```
+
+Leave AutoGen, Semantic Kernel, and the experimental `@workflow` API out of this repository. Keep Microsoft Foundry in the optional `foundry` extra.
