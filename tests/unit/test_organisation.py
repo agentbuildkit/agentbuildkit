@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from agent_framework import Message, SecretString
+from agent_framework import SecretString
 from agent_framework.openai import OpenAIChatClient
 
 from agent_platform.config import load_openai_settings
@@ -20,7 +20,6 @@ from organisation import (
     run_organisation_evaluation,
 )
 from organisation.evaluation import RAW_MODEL_OUTPUT, scripted_clients
-from organisation.models import RouteDecision
 from organisation.team import SAM, TAYLOR
 
 
@@ -168,31 +167,6 @@ async def test_specialists_receive_only_their_own_tools() -> None:
         assert organisation.taylor.definition.name == TAYLOR
     finally:
         await organisation.aclose()
-
-
-async def test_production_client_does_not_request_encrypted_reasoning(tmp_path: Path) -> None:
-    env_file = tmp_path / "openai.env"
-    env_file.write_text("", encoding="utf-8")
-    settings = load_openai_settings(
-        api_key="local-test-key",
-        chat_model="gpt-4.1-mini",
-        env_file_path=str(env_file),
-    )
-    client = production_clients(settings)["alex"]
-
-    prepared = await client.request_options(
-        [Message(role="user", contents=["hello"])],
-        {"response_format": RouteDecision},
-    )
-    opted_in = await client.request_options(
-        [Message(role="user", contents=["hello"])],
-        {"response_format": RouteDecision, "include": ["reasoning.encrypted_content"]},
-    )
-
-    assert prepared.get("model") == "gpt-4.1-mini"
-    assert prepared.get("text_format") is RouteDecision
-    assert "reasoning.encrypted_content" not in (prepared.get("include") or [])
-    assert "reasoning.encrypted_content" in opted_in.get("include", [])
 
 
 def test_production_clients_use_the_openai_adapter(tmp_path: Path) -> None:

@@ -5,11 +5,10 @@ Tests pass a ``ScriptedChatClient`` for each role. A deployment passes one
 definitions or the workflow.
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, cast
 
-from agent_framework import Message, SecretString, SupportsChatGetResponse
+from agent_framework import SecretString, SupportsChatGetResponse
 from agent_framework.openai import OpenAIChatClient, OpenAISettings
 
 from agent_platform.agents import AgentDefinition, PlatformAgent, create_agent
@@ -25,7 +24,6 @@ JORDAN = "jordan"
 ROUTE_WORKFLOW = "customer-route"
 ACTION_WORKFLOW = "service-action"
 ORGANISATION_SCOPE = "customer-service"
-_ENCRYPTED_REASONING = "reasoning.encrypted_content"
 
 _ALEX_INSTRUCTIONS = (
     "You are Alex, the operations manager for a B2B company. "
@@ -71,36 +69,12 @@ class Organisation:
         await self.business.aclose()
 
 
-class OrganisationChatClient(OpenAIChatClient):
-    """Responses client that leaves encrypted reasoning off unless requested.
-
-    The installed client adds ``reasoning.encrypted_content`` to every stateless
-    call. gpt-4.1-mini rejects that include before it returns a response.
-    """
-
-    async def request_options(
-        self,
-        messages: Sequence[Message],
-        options: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        """Build the Responses request options without sending them."""
-        return await self._prepare_options(messages, options)
-
-    async def _prepare_options(
-        self,
-        messages: Sequence[Message],
-        options: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        prepared = await super()._prepare_options(messages, options)
-        return _without_unrequested_reasoning(prepared, options)
-
-
-def production_clients(settings: OpenAISettings | None = None) -> dict[str, OrganisationChatClient]:
+def production_clients(settings: OpenAISettings | None = None) -> dict[str, OpenAIChatClient]:
     """Share one configured OpenAI client across the four roles."""
     resolved = settings or load_openai_settings()
     model = resolved.get("chat_model")
     api_key = resolved.get("api_key")
-    client = OrganisationChatClient(
+    client = OpenAIChatClient(
         model=model if isinstance(model, str) else None,
         api_key=api_key if isinstance(api_key, str | SecretString) else None,
     )
@@ -187,27 +161,6 @@ def build_team(
         business=business,
         audit_log=log,
     )
-
-
-def _without_unrequested_reasoning(
-    prepared: dict[str, Any],
-    options: Mapping[str, Any],
-) -> dict[str, Any]:
-    requested = options.get("include")
-    if isinstance(requested, list | tuple) and _ENCRYPTED_REASONING in requested:
-        return prepared
-    include = prepared.get("include")
-    if not isinstance(include, list):
-        return prepared
-    filtered: list[object] = []
-    for item in cast(list[object], include):
-        if item != _ENCRYPTED_REASONING:
-            filtered.append(item)
-    if filtered:
-        prepared["include"] = filtered
-    else:
-        prepared.pop("include", None)
-    return prepared
 
 
 def _require_client(
