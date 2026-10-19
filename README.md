@@ -2,9 +2,7 @@
 
 Reusable Python starter for enterprise AI agent teams built on Microsoft Agent Framework 1.x.
 
-This repository is a private GitHub template. Copy it for a client, then put that client's agents in `src/organisation`. Shared infrastructure stays in `src/agent_platform`.
-
-The current tree is the Phase 1 skeleton. It installs the framework and checks the package layout. It does not define agents yet.
+This repository is a private GitHub template. Copy it for a client, then put that client's agents in `src/organisation`. Shared infrastructure stays in `src/agent_platform`. The reference customer-service organisation is the local command and the container entrypoint.
 
 ## Requirements
 
@@ -37,6 +35,39 @@ uv run pytest
 ```
 
 These checks run without an API key or network access.
+
+## Docker
+
+The image installs the locked dependencies with uv, runs as a non-root user, and does not contain `.env`. `APP_STATE_DIRECTORY` is `/data`. Mount a directory there so approval state survives a new container. The health check imports the application and confirms that directory is writable. It does not call OpenAI.
+
+Build the image:
+
+```bash
+docker build -t agent-platform:local .
+```
+
+Confirm the runtime without a model call:
+
+```bash
+docker run --rm --entrypoint python agent-platform:local -m organisation.health
+```
+
+Run the reference organisation. `.env` stays on the host and is passed only to this process:
+
+```bash
+mkdir -p .data
+docker run --rm -it \
+  --env-file .env \
+  -e APP_STATE_DIRECTORY=/data \
+  -v "$PWD/.data:/data" \
+  agent-platform:local
+```
+
+Run the offline tests on the host. The image does not include the test tools:
+
+```bash
+uv run pytest
+```
 
 ## Layout
 

@@ -20,6 +20,7 @@ class AppSettings(TypedDict, total=False):
     environment: str | None
     enable_console_exporters: bool | None
     otlp_endpoint: str | None
+    state_directory: str | None
 
 
 def load_app_settings(

@@ -17,6 +17,7 @@ build/
 .env.*
 !.env.example
 traces/
+.data/
 
 # OS and editors
 .DS_Store

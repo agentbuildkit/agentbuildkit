@@ -15,7 +15,7 @@ from agent_framework import SecretString
 from agent_framework.openai import OpenAISettings
 
 from agent_platform.agents import AgentInputError, AgentOutputError
-from agent_platform.config import AppSettings, load_openai_settings
+from agent_platform.config import AppSettings, load_app_settings, load_openai_settings
 from agent_platform.observability import AuditLog
 from agent_platform.workflows import (
     RouteRejected,
@@ -23,6 +23,7 @@ from agent_platform.workflows import (
     WorkflowRunError,
     WorkflowStateStore,
     memory_workflow_store,
+    sqlite_workflow_store,
 )
 from organisation.evaluation import LOCAL_MOCK_TOKEN
 from organisation.models import CustomerRequest, FinalOutcome
@@ -30,6 +31,7 @@ from organisation.service import ServiceResult, handle_request, resume_service_a
 from organisation.team import ORGANISATION_SCOPE, Organisation, build_team, production_clients
 
 DEFAULT_CHAT_MODEL = "gpt-4.1-mini"
+_WORKFLOW_DATABASE = "workflows.sqlite"
 
 
 class OrganisationConfigError(Exception):
@@ -55,6 +57,25 @@ def resolve_settings(env_file: Path | None = None) -> OpenAISettings:
     if path.is_file():
         return load_openai_settings(env_file_path=str(path), chat_model=DEFAULT_CHAT_MODEL)
     return load_openai_settings(chat_model=DEFAULT_CHAT_MODEL)
+
+
+def state_directory(env_file: Path | None = None) -> str | None:
+    """Return ``APP_STATE_DIRECTORY`` when durable workflow state is configured."""
+    path = Path.cwd() / ".env" if env_file is None else env_file
+    settings = load_app_settings(env_file_path=str(path)) if path.is_file() else load_app_settings()
+    directory = settings.get("state_directory")
+    if isinstance(directory, str) and directory:
+        return directory
+    return None
+
+
+def open_workflow_store(audit_log: AuditLog, directory: str | None) -> WorkflowStateStore:
+    """Use SQLite under ``directory`` so a mounted volume survives the container."""
+    if directory is None:
+        return memory_workflow_store(ORGANISATION_SCOPE, audit_log)
+    path = Path(directory)
+    path.mkdir(parents=True, exist_ok=True)
+    return sqlite_workflow_store(path / _WORKFLOW_DATABASE, ORGANISATION_SCOPE, audit_log)
 
 
 def render_outcome(outcome: FinalOutcome) -> str:
@@ -197,7 +218,7 @@ async def _interactive(settings: OpenAISettings) -> int:
             return 1
         correlation_id = uuid.uuid4().hex
         print(f"Correlation: {correlation_id}")
-        store = memory_workflow_store(ORGANISATION_SCOPE, organisation.audit_log)
+        store = open_workflow_store(organisation.audit_log, state_directory())
         await run_session(
             organisation,
             store,

@@ -12,11 +12,13 @@ from organisation.cli import (
     DEFAULT_CHAT_MODEL,
     OrganisationConfigError,
     approval_from_text,
+    open_workflow_store,
     render_approval,
     render_failure,
     render_outcome,
     resolve_settings,
     run_session,
+    state_directory,
 )
 from organisation.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
 from organisation.models import CustomerRequest, FinalOutcome
@@ -203,6 +205,63 @@ async def test_service_action_session_resumes_after_approval() -> None:
     assert "schedule_visit" in lines[0]
     assert "Status: completed" in lines[1]
     assert LOCAL_MOCK_TOKEN not in "\n".join(lines)
+
+
+def test_state_directory_reads_the_app_setting(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("APP_STATE_DIRECTORY=/data\n", encoding="utf-8")
+
+    assert state_directory(env_file) == "/data"
+
+
+def test_health_check_imports_without_an_api_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_STATE_DIRECTORY", str(tmp_path))
+    from organisation.health import check
+
+    assert check() == 0
+
+
+def test_health_check_rejects_a_missing_state_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_STATE_DIRECTORY", "/missing/workflow-state")
+    from organisation.health import check
+
+    assert check() == 1
+
+
+async def test_mounted_directory_keeps_approval_state_without_prompts(
+    tmp_path: Path,
+) -> None:
+    actions: list[str] = []
+    audit_log = AuditLog()
+    organisation = build_team(
+        clients=scripted_clients("service-action-pauses-for-approval"),
+        api_token=SecretString(LOCAL_MOCK_TOKEN),
+        audit_log=audit_log,
+        actions=actions,
+        configurator=_silent,
+    )
+    try:
+        outcome = await run_session(
+            organisation,
+            open_workflow_store(audit_log, str(tmp_path)),
+            CustomerRequest(reference="A-100", message="The service request is still open."),
+            correlation_id="cli-volume",
+            approve=_approve,
+            write=lambda _text: None,
+        )
+    finally:
+        await organisation.aclose()
+
+    stored = b"".join(path.read_bytes() for path in tmp_path.iterdir() if path.is_file())
+    assert outcome.status == "completed"
+    assert actions == ["A-100:schedule_visit"]
+    assert (tmp_path / "workflows.sqlite").is_file()
+    assert b"local-mock-business-token" not in stored
+    assert b"schedule_visit" not in stored
+    assert b"The service request is still open." not in stored
+    assert b"sk-" not in stored
 
 
 async def test_rejected_service_action_is_not_run() -> None:
