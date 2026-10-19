@@ -1,8 +1,11 @@
 # Reference organisation
 
 This directory is the client-specific part of the starter. The platform in
-`agent_platform` stays reusable. This reference is a fictional B2B customer
-service team:
+`agent_platform` stays reusable. The team below is a fictional example. Replace
+this package when a client engagement starts. The steps are in
+`CREATE_NEW_ORGANISATION.md`.
+
+This reference is a fictional B2B customer service team:
 
 - Alex classifies a typed request.
 - Python routes that decision to Sam or Taylor, and rejects any other name.

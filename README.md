@@ -1,60 +1,45 @@
 # Agent Framework Starter
 
-Reusable Python starter for enterprise AI agent teams built on Microsoft Agent Framework 1.x.
+Private template for building a client AI organisation on Microsoft Agent Framework 1.x.
 
-This repository is a private GitHub template. Copy it for a client, then put that client's agents in `src/organisation`. Shared infrastructure stays in `src/agent_platform`. The reference customer-service organisation is the local command and the container entrypoint.
+A consulting engagement copies this repository, keeps the shared platform, and replaces the sample organisation with that client's agents, tools, and workflows. The platform handles typed agent runs, allowlisted tools, human approval, SQLite pause state, HTTP and MCP allowlists, audit, correlation, and offline evaluation. The client package decides what the organisation is allowed to do.
 
-## Requirements
+## Architecture
 
-- macOS on Apple Silicon, or any platform with Python 3.12
-- [uv](https://docs.astral.sh/uv/) 0.12 or newer
+`src/agent_platform` is reusable platform IP. `src/organisation` is the replaceable client implementation. Agents return typed Pydantic models. Python routes, validates, and decides when a side effect may run. The model does not choose credentials, URLs, or whether a write is permitted.
 
-## Setup
+The diagram and the rules for tools, approval, persistence, and evaluation are in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Quick start
+
+Requires Python 3.12 and [uv](https://docs.astral.sh/uv/) 0.12 or newer.
 
 ```bash
 uv python install 3.12
 uv sync --locked
 cp .env.example .env
+uv run python -m organisation
 ```
 
-Fill in `OPENAI_API_KEY` in `.env` when a later phase needs a live model. The default local path uses `OpenAIChatClient`.
+Put `OPENAI_API_KEY` in `.env` only when you run a live model. Leave the file uncommitted. `OPENAI_CHAT_MODEL` selects the model. An empty value uses `gpt-4.1-mini` for the reference command.
 
-Microsoft Foundry is an optional extra and is not installed by `uv sync`:
+Microsoft Foundry is an optional extra and is not installed by a normal sync:
 
 ```bash
 uv sync --locked --extra foundry
 ```
 
-## Checks
+## Reference organisation
 
-```bash
-uv run ruff check .
-uv run ruff format --check .
-uv run pyright
-uv run pytest
-```
-
-These checks run without an API key or network access.
+`src/organisation` contains a fictional B2B customer-service team: Alex classifies, Sam reads accounts, Taylor reads services, and Jordan reviews the draft. A service change pauses for a person. The business system is an in-process mock with one customer, `A-100`. This package is the working example. Replace it for a client deployment. Details are in [src/organisation/README.md](src/organisation/README.md).
 
 ## Docker
 
-The image installs the locked dependencies with uv, runs as a non-root user, and does not contain `.env`. `APP_STATE_DIRECTORY` is `/data`. Mount a directory there so approval state survives a new container. The health check imports the application and confirms that directory is writable. It does not call OpenAI.
-
-Build the image:
+The image installs the locked dependencies, runs as uid 10001, and does not contain `.env`. Approval state is SQLite on `/data`.
 
 ```bash
 docker build -t agent-platform:local .
-```
-
-Confirm the runtime without a model call:
-
-```bash
 docker run --rm --entrypoint python agent-platform:local -m organisation.health
-```
-
-Run the reference organisation. `.env` stays on the host and is passed only to this process:
-
-```bash
 mkdir -p .data
 docker run --rm -it \
   --env-file .env \
@@ -63,19 +48,38 @@ docker run --rm -it \
   agent-platform:local
 ```
 
-Run the offline tests on the host. The image does not include the test tools:
+The health check imports the application and confirms the data directory is writable. It does not call OpenAI.
+
+## Create a new organisation
+
+1. Copy this repository for the client.
+2. Complete [CLIENT_DISCOVERY.md](CLIENT_DISCOVERY.md) with the business.
+3. Turn that into [ORGANISATION_SPEC.md](ORGANISATION_SPEC.md).
+4. Follow [CREATE_NEW_ORGANISATION.md](CREATE_NEW_ORGANISATION.md).
+5. In Cursor, use [NEW_ORGANISATION_PROMPT.md](NEW_ORGANISATION_PROMPT.md). The prompt keeps changes inside `src/organisation` unless a platform gap is accepted first.
+6. Walk [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) before the client uses it.
+
+## Security and governance
+
+Secrets stay in the environment. Side effects use an allowlisted tool and wait for a person. HTTP and MCP targets come from configuration, and credentials are supplied by a header provider or client settings. Audit records and checkpoints store hashes and identifiers. They omit prompts, raw model responses, raw tool arguments, and credentials. Unknown routes fail closed. A repeated approval does not run the side effect again.
+
+## Testing and evaluation
 
 ```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run pyright
 uv run pytest
 ```
+
+The default suite runs offline. Organisation cases live with the client package and use a scripted chat client. A live model run is a separate smoke test performed by a person.
 
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
-| `src/agent_platform` | Reusable platform code |
-| `src/organisation` | Client-specific agents and workflows |
+| `src/agent_platform` | Reusable platform |
+| `src/organisation` | Client organisation, currently the reference example |
 | `tests/unit` | Offline tests |
-| `tests/integration` | Live-service tests, excluded from the default CI path until they exist |
-| `tests/evaluation` | Offline evaluator cases |
-| `AGENTS.md` | Instructions for Cursor agents working in this repository |
+| `tests/integration` | Live-service tests, marked and kept out of the default run |
+| `AGENTS.md` | Rules for engineers and Cursor agents working in this repository |
