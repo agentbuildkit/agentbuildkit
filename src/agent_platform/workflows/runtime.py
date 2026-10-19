@@ -6,12 +6,12 @@ workflow, and they do not let a model-supplied name address an arbitrary agent.
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from agent_framework import (
+    CheckpointStorage,
     Executor,
     FunctionTool,
-    InMemoryCheckpointStorage,
     Workflow,
     WorkflowContext,
     WorkflowRunResult,
@@ -103,11 +103,11 @@ class WorkflowRun:
 
 @dataclass
 class CompiledWorkflow:
-    """A built workflow and the in-memory checkpoints for that instance."""
+    """A built workflow and the checkpoint storage for that definition."""
 
     name: str
     workflow: Workflow
-    checkpoints: InMemoryCheckpointStorage
+    checkpoints: CheckpointStorage
 
 
 class AgentStep(Executor):
@@ -183,6 +183,14 @@ class ResultAggregator(Executor):
         )
 
 
+@dataclass
+class _PausedAction:
+    """In-memory arguments for one pause. Checkpoints store only the hash."""
+
+    argument_hash: str
+    arguments: dict[str, Any] | None = None
+
+
 class ApprovalGate(Executor):
     """Pause for a human decision before a prepared side-effect tool runs."""
 
@@ -199,20 +207,23 @@ class ApprovalGate(Executor):
             raise WorkflowInputError("Approval gate requires a side-effect tool.")
         self._tool = tool
         self._audit_log = audit_log
-        self._pending: dict[str, dict[str, Any]] = {}
+        self._pending: dict[str, _PausedAction] = {}
+        self._staged: tuple[str, dict[str, Any]] | None = None
+
+    def stage_arguments(self, correlation_id: str, arguments: Mapping[str, Any]) -> None:
+        """Hold arguments until checkpoint restore. They are not written to storage."""
+        self._staged = (correlation_id, _copy_arguments(arguments))
 
     @handler
     async def request_approval(self, message: WorkflowEnvelope, ctx: WorkflowContext) -> None:
-        self._pending[message.correlation_id] = dict(message.body)
-        self._audit_log.record(
-            AuditEvent(
-                correlation_id=message.correlation_id,
-                agent_name=self.id,
-                tool_name=self._tool.name,
-                approval="pending",
-                outcome="pending_approval",
-                argument_hash=argument_hash(message.body),
-            )
+        body = _copy_arguments(message.body)
+        digest = argument_hash(body)
+        self._pending[message.correlation_id] = _PausedAction(argument_hash=digest, arguments=body)
+        self._audit(
+            correlation_id=message.correlation_id,
+            approval="pending",
+            outcome="pending_approval",
+            argument_hash=digest,
         )
         await ctx.request_info(
             HumanApprovalRequest(correlation_id=message.correlation_id, action=self._tool.name),
@@ -226,19 +237,16 @@ class ApprovalGate(Executor):
         response: HumanApprovalResponse,
         ctx: WorkflowContext[WorkflowEnvelope, WorkflowEnvelope],
     ) -> None:
-        arguments = self._pending.pop(original.correlation_id, None)
-        if arguments is None:
+        paused = self._pending.pop(original.correlation_id, None)
+        if paused is None:
             raise WorkflowRunError("Approval state for this run is missing.")
         if not response.approved:
-            self._audit_log.record(
-                AuditEvent(
-                    correlation_id=original.correlation_id,
-                    agent_name=self.id,
-                    tool_name=self._tool.name,
-                    approval="rejected",
-                    outcome="rejected",
-                    argument_hash=argument_hash(arguments),
-                )
+            self._audit(
+                correlation_id=original.correlation_id,
+                approval="rejected",
+                outcome="rejected",
+                argument_hash=paused.argument_hash,
+                kind="approval_rejected",
             )
             await ctx.yield_output(
                 WorkflowEnvelope(
@@ -248,6 +256,16 @@ class ApprovalGate(Executor):
                 )
             )
             return
+        arguments = paused.arguments
+        if arguments is None:
+            raise WorkflowRunError("Approval arguments must be supplied for this run.")
+        self._audit(
+            correlation_id=original.correlation_id,
+            approval="approved",
+            outcome="pending_approval",
+            argument_hash=paused.argument_hash,
+            kind="side_effect_attempted",
+        )
         try:
             await execute_tool(
                 self._tool,
@@ -258,7 +276,21 @@ class ApprovalGate(Executor):
                 decision=ApprovalDecision(self._tool.name, approved=True),
             )
         except Exception:
+            self._audit(
+                correlation_id=original.correlation_id,
+                approval="approved",
+                outcome="failed",
+                argument_hash=paused.argument_hash,
+                kind="side_effect_failed",
+            )
             raise WorkflowRunError("Side effect could not be completed.") from None
+        self._audit(
+            correlation_id=original.correlation_id,
+            approval="approved",
+            outcome="completed",
+            argument_hash=paused.argument_hash,
+            kind="side_effect_completed",
+        )
         await ctx.yield_output(
             WorkflowEnvelope(
                 correlation_id=original.correlation_id,
@@ -268,21 +300,60 @@ class ApprovalGate(Executor):
         )
 
     async def on_checkpoint_save(self) -> dict[str, Any]:
-        return {"pending": {key: dict(value) for key, value in self._pending.items()}}
+        pending = {
+            key: {"argument_hash": value.argument_hash} for key, value in self._pending.items()
+        }
+        return {"pending": pending}
 
     async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         restored = state.get(_PENDING_KEY, {})
-        if not isinstance(restored, dict):
-            self._pending = {}
-            return
-        pending: dict[str, dict[str, Any]] = {}
-        for key, value in cast(Mapping[Any, Any], restored).items():
-            if isinstance(key, str) and isinstance(value, dict):
-                copied: dict[str, Any] = {}
-                for item_key, item_value in cast(Mapping[Any, Any], value).items():
-                    copied[str(item_key)] = item_value
-                pending[key] = copied
+        pending: dict[str, _PausedAction] = {}
+        if isinstance(restored, dict):
+            for key, value in cast(Mapping[Any, Any], restored).items():
+                if not isinstance(key, str) or not isinstance(value, dict):
+                    continue
+                digest = cast(Mapping[str, Any], value).get("argument_hash")
+                if not isinstance(digest, str):
+                    continue
+                arguments: dict[str, Any] | None = None
+                current = self._pending.get(key)
+                if current is not None and current.argument_hash == digest:
+                    arguments = current.arguments
+                if self._staged is not None and self._staged[0] == key:
+                    staged = self._staged[1]
+                    if argument_hash(staged) != digest:
+                        raise WorkflowRunError("Approval arguments do not match the paused action.")
+                    arguments = staged
+                pending[key] = _PausedAction(argument_hash=digest, arguments=arguments)
         self._pending = pending
+        self._staged = None
+
+    def _audit(
+        self,
+        *,
+        correlation_id: str,
+        approval: Literal["not_required", "pending", "approved", "rejected"],
+        outcome: Literal["completed", "pending_approval", "rejected", "failed"],
+        argument_hash: str,
+        kind: Literal[
+            "tool",
+            "approval_rejected",
+            "side_effect_attempted",
+            "side_effect_completed",
+            "side_effect_failed",
+        ] = "tool",
+    ) -> None:
+        self._audit_log.record(
+            AuditEvent(
+                correlation_id=correlation_id,
+                agent_name=self.id,
+                tool_name=self._tool.name,
+                approval=approval,
+                outcome=outcome,
+                argument_hash=argument_hash,
+                kind=kind,
+            )
+        )
 
 
 async def run_workflow(
@@ -344,6 +415,13 @@ async def _checkpoint_for_request(compiled: CompiledWorkflow, request_id: str) -
     if not matches:
         raise WorkflowRunError("Workflow paused without a checkpoint.")
     return max(matches, key=lambda checkpoint: checkpoint.timestamp).checkpoint_id
+
+
+def _copy_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    copied: dict[str, Any] = {}
+    for key, value in arguments.items():
+        copied[str(key)] = value
+    return copied
 
 
 def _correlation_id(message: WorkflowEnvelope | None) -> str | None:

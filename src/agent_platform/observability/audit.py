@@ -13,6 +13,17 @@ from pydantic import BaseModel, ConfigDict
 
 ApprovalState = Literal["not_required", "pending", "approved", "rejected"]
 AuditOutcome = Literal["completed", "pending_approval", "rejected", "failed"]
+AuditKind = Literal[
+    "tool",
+    "checkpoint_created",
+    "workflow_paused",
+    "workflow_resumed",
+    "approval_accepted",
+    "approval_rejected",
+    "side_effect_attempted",
+    "side_effect_completed",
+    "side_effect_failed",
+]
 _REDACTED_ARGUMENT = "<redacted>"
 
 
@@ -27,6 +38,7 @@ class AuditEvent(BaseModel):
     approval: ApprovalState
     outcome: AuditOutcome
     argument_hash: str
+    kind: AuditKind = "tool"
 
 
 class AuditLog:

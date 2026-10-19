@@ -20,6 +20,8 @@ def trace_from_audit(audit_log: AuditLog, *, correlation_id: str) -> CaseObserva
     correlation_ids: list[str] = []
     for event in audit_log.events:
         correlation_ids.append(event.correlation_id)
+        if event.kind != "tool":
+            continue
         if event.argument_hash == _AGENT_RUN:
             if event.agent_name is not None:
                 agents.append(event.agent_name)

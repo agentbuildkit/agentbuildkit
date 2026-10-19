@@ -10,6 +10,7 @@ from typing import Any, cast
 
 from agent_framework import (
     Case,
+    CheckpointStorage,
     Default,
     Executor,
     FunctionTool,
@@ -130,10 +131,11 @@ def approval_workflow(
     audit_log: AuditLog,
     *,
     name: str,
+    storage: CheckpointStorage | None = None,
 ) -> CompiledWorkflow:
     """Pause before a side effect and resume only from an explicit human response."""
     gate = ApprovalGate(tool, audit_log)
-    return _compile(name, gate, lambda builder: builder)
+    return _compile(name, gate, lambda builder: builder, storage=storage)
 
 
 class _TaskDispatcher(Executor):
@@ -204,8 +206,9 @@ def _compile(
     name: str,
     start: Executor,
     connect: Callable[[WorkflowBuilder], WorkflowBuilder],
+    storage: CheckpointStorage | None = None,
 ) -> CompiledWorkflow:
-    checkpoints = InMemoryCheckpointStorage()
+    checkpoints = storage if storage is not None else InMemoryCheckpointStorage()
     builder = WorkflowBuilder(
         name=name,
         start_executor=start,
