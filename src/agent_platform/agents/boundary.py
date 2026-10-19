@@ -30,7 +30,12 @@ from agent_platform.guardrails import (
     tool_audit_middleware,
     tool_effect,
 )
-from agent_platform.observability import AuditEvent, AuditLog
+from agent_platform.observability import (
+    AuditEvent,
+    AuditLog,
+    bind_correlation_id,
+    reset_correlation_id,
+)
 from agent_platform.observability.audit import ApprovalState, AuditOutcome
 
 
@@ -90,6 +95,7 @@ class PlatformAgent[InputT: BaseModel, OutputT: BaseModel]:
         if not isinstance(data, self.definition.input_type):
             raise AgentInputError(f"Expected input type {self.definition.input_type.__name__}.")
         resolved_correlation_id = correlation_id or uuid.uuid4().hex
+        correlation_token = bind_correlation_id(resolved_correlation_id)
         try:
             response = await self.agent.run(
                 data.model_dump_json(),
@@ -126,14 +132,17 @@ class PlatformAgent[InputT: BaseModel, OutputT: BaseModel]:
                 approval="not_required",
             )
             raise
-        _record_run(
-            self.audit_log,
-            correlation_id=resolved_correlation_id,
-            agent_name=self.definition.name,
-            outcome="completed",
-            approval="not_required",
-        )
-        return output
+        else:
+            _record_run(
+                self.audit_log,
+                correlation_id=resolved_correlation_id,
+                agent_name=self.definition.name,
+                outcome="completed",
+                approval="not_required",
+            )
+            return output
+        finally:
+            reset_correlation_id(correlation_token)
 
 
 def create_agent[InputT: BaseModel, OutputT: BaseModel](
