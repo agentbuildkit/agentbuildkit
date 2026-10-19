@@ -8,7 +8,7 @@ a side-effecting tool does not run until a matching approval decision is supplie
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from agent_framework import (
     Content,
@@ -17,6 +17,7 @@ from agent_framework import (
     FunctionTool,
     tool,
 )
+from pydantic import BaseModel
 
 from agent_platform.observability.audit import (
     ApprovalState,
@@ -125,12 +126,10 @@ class _AuditMiddleware(FunctionMiddleware):
         *,
         correlation_id: str,
         agent_name: str | None,
-        arguments: Mapping[str, Any],
     ) -> None:
         self._audit_log = audit_log
         self._correlation_id = correlation_id
         self._agent_name = agent_name
-        self._argument_hash = argument_hash(arguments)
 
     async def process(
         self,
@@ -145,19 +144,48 @@ class _AuditMiddleware(FunctionMiddleware):
         self._record(context, outcome=_outcome(context))
 
     def _record(self, context: FunctionInvocationContext, *, outcome: AuditOutcome) -> None:
-        approval = context.metadata.get("approval_state", "pending")
-        if approval not in {"not_required", "pending", "approved", "rejected"}:
-            approval = "pending"
         self._audit_log.record(
             AuditEvent(
                 correlation_id=self._correlation_id,
                 agent_name=self._agent_name,
                 tool_name=context.function.name,
-                approval=approval,
+                approval=_approval_state(context),
                 outcome=outcome,
-                argument_hash=self._argument_hash,
+                argument_hash=argument_hash(_argument_mapping(context.arguments)),
             )
         )
+
+
+def tool_audit_middleware(
+    audit_log: AuditLog,
+    *,
+    correlation_id: str,
+    agent_name: str | None,
+) -> FunctionMiddleware:
+    """Audit a framework tool call without recording argument values."""
+    return _AuditMiddleware(
+        audit_log,
+        correlation_id=correlation_id,
+        agent_name=agent_name,
+    )
+
+
+class PreparedToolGuard(FunctionMiddleware):
+    """Refuse tools that were not prepared with an effect and matching approval mode."""
+
+    async def process(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
+        try:
+            effect = tool_effect(context.function)
+            _require_consistent_mode(context.function, effect)
+        except ToolPolicyError:
+            context.metadata["approval_state"] = "rejected"
+            context.result = "Tool is not registered for this agent."
+            return
+        await call_next()
 
 
 async def execute_tool(
@@ -189,11 +217,10 @@ async def execute_tool(
 
     context = FunctionInvocationContext(function=function_tool, arguments=dict(arguments))
     middleware: Sequence[FunctionMiddleware] = (
-        _AuditMiddleware(
+        tool_audit_middleware(
             audit_log,
             correlation_id=resolved_correlation_id,
             agent_name=agent_name,
-            arguments=arguments,
         ),
         _ApprovalMiddleware(decision),
     )
@@ -252,6 +279,33 @@ def _approval_content(context: FunctionInvocationContext, *, approved: bool | No
         id=call_id,
         function_call=function_call,
     )
+
+
+def _approval_state(context: FunctionInvocationContext) -> ApprovalState:
+    recorded = context.metadata.get("approval_state")
+    if recorded in {"not_required", "pending", "approved", "rejected"}:
+        return cast(ApprovalState, recorded)
+    if context.function.approval_mode == "never_require":
+        return "not_required"
+    result = context.result
+    if isinstance(result, Content) and result.type == "function_approval_request":
+        return "pending"
+    if isinstance(result, Content) and result.type == "function_approval_response":
+        return "rejected"
+    return "approved"
+
+
+def _argument_mapping(arguments: Any) -> dict[str, Any]:
+    if isinstance(arguments, BaseModel):
+        dumped: dict[str, Any] = arguments.model_dump()
+        return dumped
+    if isinstance(arguments, Mapping):
+        mapped: dict[str, Any] = {}
+        items = cast(Mapping[Any, Any], arguments)
+        for key, value in items.items():
+            mapped[str(key)] = value
+        return mapped
+    return {}
 
 
 def _outcome(context: FunctionInvocationContext) -> AuditOutcome:
