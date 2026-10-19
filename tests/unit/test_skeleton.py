@@ -22,7 +22,7 @@ MODULES = [
 
 
 def test_version_is_set() -> None:
-    assert agent_platform.__version__ == "0.1.0"
+    assert agent_platform.__version__ == "1.0.0"
 
 
 def test_submodules_import() -> None:

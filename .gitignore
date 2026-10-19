@@ -18,6 +18,12 @@ build/
 !.env.example
 traces/
 .data/
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
 
 # OS and editors
 .DS_Store

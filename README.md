@@ -1,6 +1,6 @@
 # Agent Framework Starter
 
-Private template for building a client AI organisation on Microsoft Agent Framework 1.x.
+Private template for building a client AI organisation on Microsoft Agent Framework 1.x. The current release is [1.0.0](CHANGELOG.md).
 
 A consulting engagement copies this repository, keeps the shared platform, and replaces the sample organisation with that client's agents, tools, and workflows. The platform handles typed agent runs, allowlisted tools, human approval, SQLite pause state, HTTP and MCP allowlists, audit, correlation, and offline evaluation. The client package decides what the organisation is allowed to do.
 
