@@ -23,3 +23,12 @@ from organisation import build_team, handle_request, production_clients
 
 team = build_team(clients=production_clients(), api_token=token)
 ```
+
+A local live run uses that same client path:
+
+```bash
+uv run python -m organisation
+```
+
+`OPENAI_CHAT_MODEL` selects the model. When it is unset, the command uses
+`gpt-4.1-mini`. The mock business system only has customer reference `A-100`.
