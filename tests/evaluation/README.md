@@ -1,3 +1,4 @@
 # Evaluation tests
 
-Offline `LocalEvaluator` cases will live here. They must pass without a live model or network access.
+The reusable runner lives in `agent_platform.evaluation` and is covered by `tests/unit/test_evaluation.py`.
+Organisation-specific datasets belong with the client, not in this package. Suite runs stay offline.
