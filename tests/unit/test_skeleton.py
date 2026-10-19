@@ -15,6 +15,7 @@ MODULES = [
     "agent_platform.orchestrations",
     "agent_platform.runtime",
     "agent_platform.schemas",
+    "agent_platform.testing",
     "agent_platform.tools",
     "agent_platform.workflows",
 ]
