@@ -34,7 +34,7 @@ package = true
 default-groups = ["dev"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_platform"]
+packages = ["src/agent_platform", "src/organisation"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -54,7 +54,7 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["agent_platform"]
+known-first-party = ["agent_platform", "organisation"]
 
 [tool.pyright]
 pythonVersion = "3.12"
