@@ -5,13 +5,15 @@ from pathlib import Path
 import pytest
 from agent_framework import SecretString
 
-from agent_platform.observability import AuditLog
+from agent_platform.agents import AgentOutputError
+from agent_platform.observability import AuditEvent, AuditLog
 from agent_platform.workflows import memory_workflow_store
 from organisation.cli import (
     DEFAULT_CHAT_MODEL,
     OrganisationConfigError,
     approval_from_text,
     render_approval,
+    render_failure,
     render_outcome,
     resolve_settings,
     run_session,
@@ -72,6 +74,53 @@ def test_chat_model_defaults_when_unset(tmp_path: Path) -> None:
     settings = resolve_settings(env_file)
 
     assert settings.get("chat_model") == DEFAULT_CHAT_MODEL
+
+
+def test_failure_line_names_the_agent_and_hides_secrets() -> None:
+    audit_log = AuditLog()
+    audit_log.record(
+        AuditEvent(
+            correlation_id="corr-live",
+            agent_name="alex",
+            tool_name="alex",
+            approval="not_required",
+            outcome="failed",
+            argument_hash="agent-run",
+        )
+    )
+    safe = render_failure(
+        AgentOutputError("Agent 'alex' returned output that does not match RouteDecision."),
+        audit_log,
+        "corr-live",
+    )
+    leaked = render_failure(
+        _ServiceError(
+            "Error code: 400 - {'error': {'message': 'see sk-live-secret'}}",
+            status_code=400,
+            body={"error": {"message": "see sk-live-secret"}},
+        ),
+        audit_log,
+        "corr-live",
+    )
+    service = render_failure(
+        _ServiceError(
+            "raw body",
+            status_code=400,
+            body={"error": {"message": "Encrypted content is not supported with this model."}},
+        ),
+        audit_log,
+        "corr-live",
+    )
+
+    assert "Type: AgentOutputError" in safe
+    assert "Stage: agent-run" in safe
+    assert "Agent: alex" in safe
+    assert "Correlation: corr-live" in safe
+    assert "RouteDecision" in safe
+    assert "sk-live-secret" not in leaked
+    assert "Reason: The model service returned HTTP 400." in leaked
+    assert "Encrypted content is not supported with this model." in service
+    assert "raw body" not in service
 
 
 def test_approval_text_accepts_yes_and_no() -> None:
@@ -190,3 +239,10 @@ def _approve(result: ServiceResult) -> bool:
 
 def _reject_approval(_result: ServiceResult) -> bool:
     return False
+
+
+class _ServiceError(Exception):
+    def __init__(self, message: str, *, status_code: int, body: dict[str, object]) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
