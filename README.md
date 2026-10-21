@@ -10,7 +10,7 @@ A consulting engagement copies this repository, keeps the shared platform, and r
 
 The diagram and the rules for tools, approval, persistence, and evaluation are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Platform state version 2 adds a durable audit ledger, a run registry, and an organisation directory with work items to the same SQLite file. The same version now also stores workflow delegations, child-run outcomes, named gates, and bounded grants. Version 1 files still open for approval checkpoints. Ledger, run, and directory calls fail closed until `migrate_platform_state()` runs. The reference organisation does not require that migration and still uses its anonymous approval decision.
+Platform state version 2 adds a durable audit ledger, a run registry, and an organisation directory with work items to the same SQLite file. The same version now also stores workflow delegations, child-run outcomes, named gates, and bounded grants. GitHub operations bind an allowlisted repository and run through those grants. Version 1 files still open for approval checkpoints. Ledger, run, and directory calls fail closed until `migrate_platform_state()` runs. The reference organisation does not require that migration and still uses its anonymous approval decision.
 
 ## Quick start
 

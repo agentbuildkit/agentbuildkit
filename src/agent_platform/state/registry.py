@@ -15,6 +15,13 @@ from pydantic import ValidationError
 
 from agent_platform.observability import argument_hash
 from agent_platform.observability.audit import AuditEvent
+from agent_platform.state.github import (
+    GithubBindings,
+    GithubRegistryMethods,
+    MemoryGithubStorage,
+    SqliteGithubStorage,
+    signal_from_row,
+)
 from agent_platform.state.models import (
     SIGNAL_CHILD_FINISHED,
     CheckpointCompatibilityError,
@@ -23,6 +30,12 @@ from agent_platform.state.models import (
     ChildWaitRecord,
     DelegationRecord,
     GateRecord,
+    GithubBindingRecord,
+    GithubCheckRecord,
+    GithubNoteRecord,
+    GithubPullRequestRecord,
+    GithubRefRecord,
+    GithubReleaseRecord,
     GrantRecord,
     GrantStatus,
     GrantUseRecord,
@@ -82,6 +95,13 @@ V2_EXTENSION_TABLES = (
     "gates",
     "grants",
     "grant_uses",
+    "repository_protections",
+    "github_bindings",
+    "github_refs",
+    "github_pull_requests",
+    "github_checks",
+    "github_releases",
+    "github_notes",
 )
 V2_TABLES = V2_CORE_TABLES + V2_EXTENSION_TABLES
 V2_INDEXES = ("runs_one_mutating", "runs_one_checkpoint", "teams_name")
@@ -195,6 +215,8 @@ CREATE TABLE IF NOT EXISTS signals (
     outcome_status TEXT NOT NULL,
     created_at TEXT NOT NULL,
     consumed_at TEXT,
+    subject_kind TEXT,
+    subject_id TEXT,
     PRIMARY KEY (scope, signal_id)
 );
 CREATE TABLE IF NOT EXISTS child_waits (
@@ -253,6 +275,70 @@ CREATE TABLE IF NOT EXISTS grant_uses (
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY (scope, grant_id, tool_name, argument_hash)
+);
+CREATE TABLE IF NOT EXISTS repository_protections (
+    scope TEXT NOT NULL,
+    repository TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    PRIMARY KEY (scope, repository, branch)
+);
+CREATE TABLE IF NOT EXISTS github_bindings (
+    scope TEXT NOT NULL,
+    binding_id TEXT NOT NULL,
+    repository TEXT NOT NULL,
+    work_item_id TEXT NOT NULL,
+    run_id TEXT,
+    issue_number INTEGER,
+    issue_content_hash TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (scope, binding_id)
+);
+CREATE TABLE IF NOT EXISTS github_refs (
+    scope TEXT NOT NULL,
+    binding_id TEXT NOT NULL,
+    ref TEXT NOT NULL,
+    sha TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (scope, binding_id, ref)
+);
+CREATE TABLE IF NOT EXISTS github_pull_requests (
+    scope TEXT NOT NULL,
+    binding_id TEXT NOT NULL,
+    number INTEGER NOT NULL,
+    head_ref TEXT NOT NULL,
+    head_sha TEXT NOT NULL,
+    base_ref TEXT NOT NULL,
+    state TEXT NOT NULL,
+    merge_sha TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (scope, binding_id)
+);
+CREATE TABLE IF NOT EXISTS github_checks (
+    scope TEXT NOT NULL,
+    binding_id TEXT NOT NULL,
+    check_id TEXT NOT NULL,
+    conclusion TEXT NOT NULL,
+    head_sha TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (scope, binding_id, check_id)
+);
+CREATE TABLE IF NOT EXISTS github_releases (
+    scope TEXT NOT NULL,
+    binding_id TEXT NOT NULL,
+    release_id TEXT NOT NULL,
+    tag TEXT NOT NULL,
+    target_sha TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (scope, binding_id, release_id)
+);
+CREATE TABLE IF NOT EXISTS github_notes (
+    scope TEXT NOT NULL,
+    binding_id TEXT NOT NULL,
+    note_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (scope, binding_id, note_id)
 );
 """
 
@@ -471,6 +557,107 @@ class PlatformRegistry(Protocol):
         status: Literal["completed", "failed"],
     ) -> None: ...
 
+    def protect_branch(self, scope: str, repository: str, branch: str) -> str: ...
+
+    def protected_branches(self, scope: str, repository: str) -> tuple[str, ...]: ...
+
+    def bind_github_repository(
+        self,
+        scope: str,
+        *,
+        repository: str,
+        work_item_id: str,
+        run_id: str | None = None,
+        issue_number: int | None = None,
+        binding_id: str | None = None,
+    ) -> GithubBindingRecord: ...
+
+    def get_github_binding(self, scope: str, binding_id: str) -> GithubBindingRecord: ...
+
+    def note_github_issue(
+        self, scope: str, binding_id: str, *, content_hash: str
+    ) -> GithubBindingRecord: ...
+
+    def find_github_ref(self, scope: str, binding_id: str, ref: str) -> GithubRefRecord | None: ...
+
+    def list_github_refs(self, scope: str, binding_id: str) -> tuple[GithubRefRecord, ...]: ...
+
+    def record_github_ref(
+        self, scope: str, binding_id: str, *, ref: str, sha: str
+    ) -> GithubRefRecord: ...
+
+    def find_github_pull_request(
+        self, scope: str, binding_id: str
+    ) -> GithubPullRequestRecord | None: ...
+
+    def record_github_pull_request(
+        self,
+        scope: str,
+        binding_id: str,
+        *,
+        number: int,
+        head_ref: str,
+        head_sha: str,
+        base_ref: str,
+        state: Literal["open", "closed", "merged"],
+        merge_sha: str | None = None,
+    ) -> GithubPullRequestRecord: ...
+
+    def list_github_checks(self, scope: str, binding_id: str) -> tuple[GithubCheckRecord, ...]: ...
+
+    def record_github_check(
+        self,
+        scope: str,
+        binding_id: str,
+        *,
+        check_id: str,
+        conclusion: str,
+        head_sha: str,
+    ) -> GithubCheckRecord: ...
+
+    def list_github_releases(
+        self, scope: str, binding_id: str
+    ) -> tuple[GithubReleaseRecord, ...]: ...
+
+    def record_github_release(
+        self,
+        scope: str,
+        binding_id: str,
+        *,
+        release_id: str,
+        tag: str,
+        target_sha: str,
+    ) -> GithubReleaseRecord: ...
+
+    def record_github_note(
+        self,
+        scope: str,
+        binding_id: str,
+        *,
+        note_id: str,
+        kind: Literal["comment", "review"],
+    ) -> GithubNoteRecord: ...
+
+    def publish_github_signal(
+        self,
+        scope: str,
+        *,
+        name: str,
+        target_run_id: str,
+        correlation_id: str,
+        outcome_status: str,
+        subject_kind: str,
+        subject_id: str,
+    ) -> SignalRecord: ...
+
+    def take_github_signal(self, scope: str, run_id: str, signal_id: str) -> SignalRecord: ...
+
+    def pause_for_signal(self, scope: str, run_id: str) -> RunRecord: ...
+
+    def list_signals(
+        self, scope: str, *, target_run_id: str | None = None
+    ) -> tuple[SignalRecord, ...]: ...
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -551,11 +738,12 @@ class _MemoryTables:
         self.grant_uses: dict[tuple[str, str, str, str], GrantUseRecord] = {}
 
 
-class MemoryRegistry:
+class MemoryRegistry(GithubRegistryMethods):
     """In-process registry. A new memory store is already version 2."""
 
     def __init__(self) -> None:
         self._tables = _MemoryTables()
+        self._github = GithubBindings(MemoryGithubStorage(self._tables.signals), self)
 
     def append_ledger(
         self,
@@ -1569,12 +1757,13 @@ def _bind(
     return current.model_copy(update={"checkpoint_id": token, "updated_at": _now()})
 
 
-class SqliteRegistry:
+class SqliteRegistry(GithubRegistryMethods):
     """Registry tables on the workflow store connection."""
 
     def __init__(self, connection: sqlite3.Connection, commit: Callable[[], None]) -> None:
         self._connection = connection
         self._commit = commit
+        self._github = GithubBindings(SqliteGithubStorage(connection, commit), self)
 
     def append_ledger(
         self,
@@ -3034,20 +3223,7 @@ def _outcome_from_row(row: sqlite3.Row) -> ChildOutcome:
 
 
 def _signal_from_row(row: sqlite3.Row) -> SignalRecord:
-    try:
-        return SignalRecord(
-            scope=str(row["scope"]),
-            signal_id=str(row["signal_id"]),
-            name="child_finished",
-            target_run_id=str(row["target_run_id"]),
-            source_run_id=str(row["source_run_id"]),
-            correlation_id=str(row["correlation_id"]),
-            outcome_status=require_child_outcome(str(row["outcome_status"])),
-            created_at=str(row["created_at"]),
-            consumed_at=None if row["consumed_at"] is None else str(row["consumed_at"]),
-        )
-    except ValidationError:
-        raise CheckpointCompatibilityError() from None
+    return signal_from_row(row)
 
 
 def _gate_from_row(row: sqlite3.Row) -> GateRecord:
@@ -3163,7 +3339,7 @@ def v2_schema_ready(connection: sqlite3.Connection) -> bool:
 
 
 def ensure_v2_extensions(connection: sqlite3.Connection) -> None:
-    """Add phase 3 and 4 tables to an existing version 2 file.
+    """Add phase 3, 4, and 5 tables to an existing version 2 file.
 
     Checkpoint payloads are not rewritten. Core tables that are already missing
     stay missing so a damaged file is not rebuilt.
@@ -3196,6 +3372,8 @@ def ensure_v2_extensions(connection: sqlite3.Connection) -> None:
             outcome_status TEXT NOT NULL,
             created_at TEXT NOT NULL,
             consumed_at TEXT,
+            subject_kind TEXT,
+            subject_id TEXT,
             PRIMARY KEY (scope, signal_id)
         );
         CREATE TABLE IF NOT EXISTS child_waits (
@@ -3255,8 +3433,79 @@ def ensure_v2_extensions(connection: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             PRIMARY KEY (scope, grant_id, tool_name, argument_hash)
         );
+        CREATE TABLE IF NOT EXISTS repository_protections (
+            scope TEXT NOT NULL,
+            repository TEXT NOT NULL,
+            branch TEXT NOT NULL,
+            PRIMARY KEY (scope, repository, branch)
+        );
+        CREATE TABLE IF NOT EXISTS github_bindings (
+            scope TEXT NOT NULL,
+            binding_id TEXT NOT NULL,
+            repository TEXT NOT NULL,
+            work_item_id TEXT NOT NULL,
+            run_id TEXT,
+            issue_number INTEGER,
+            issue_content_hash TEXT,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (scope, binding_id)
+        );
+        CREATE TABLE IF NOT EXISTS github_refs (
+            scope TEXT NOT NULL,
+            binding_id TEXT NOT NULL,
+            ref TEXT NOT NULL,
+            sha TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (scope, binding_id, ref)
+        );
+        CREATE TABLE IF NOT EXISTS github_pull_requests (
+            scope TEXT NOT NULL,
+            binding_id TEXT NOT NULL,
+            number INTEGER NOT NULL,
+            head_ref TEXT NOT NULL,
+            head_sha TEXT NOT NULL,
+            base_ref TEXT NOT NULL,
+            state TEXT NOT NULL,
+            merge_sha TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (scope, binding_id)
+        );
+        CREATE TABLE IF NOT EXISTS github_checks (
+            scope TEXT NOT NULL,
+            binding_id TEXT NOT NULL,
+            check_id TEXT NOT NULL,
+            conclusion TEXT NOT NULL,
+            head_sha TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            PRIMARY KEY (scope, binding_id, check_id)
+        );
+        CREATE TABLE IF NOT EXISTS github_releases (
+            scope TEXT NOT NULL,
+            binding_id TEXT NOT NULL,
+            release_id TEXT NOT NULL,
+            tag TEXT NOT NULL,
+            target_sha TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (scope, binding_id, release_id)
+        );
+        CREATE TABLE IF NOT EXISTS github_notes (
+            scope TEXT NOT NULL,
+            binding_id TEXT NOT NULL,
+            note_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (scope, binding_id, note_id)
+        );
         """
     )
+    signal_columns = {
+        str(column[1]) for column in connection.execute("PRAGMA table_info(signals)").fetchall()
+    }
+    if "subject_kind" not in signal_columns:
+        connection.execute("ALTER TABLE signals ADD COLUMN subject_kind TEXT")
+    if "subject_id" not in signal_columns:
+        connection.execute("ALTER TABLE signals ADD COLUMN subject_id TEXT")
     columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(roles)").fetchall()}
     if "permission_class" not in columns:
         connection.execute(

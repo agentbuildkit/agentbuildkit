@@ -97,12 +97,13 @@ class HttpClient:
         if "://" not in base_url:
             raise HttpPathError()
         self.name = name
+        self.base_url = base_url.rstrip("/")
         self._audit_log = audit_log
         self._header_provider = header_provider or _no_headers
         self._read_attempts = read_attempts
         limits = timeouts or HttpTimeouts()
         self._client = httpx.AsyncClient(
-            base_url=base_url,
+            base_url=self.base_url,
             timeout=httpx.Timeout(
                 connect=limits.connect,
                 read=limits.read,
@@ -219,6 +220,37 @@ class HttpClient:
         if isinstance(result, Content):
             raise HttpApprovalRequired()
         return holder[0]
+
+    async def send[ResponseT: BaseModel](
+        self,
+        method: HttpMethod,
+        path: str,
+        *,
+        response_type: type[ResponseT],
+        json_body: BaseModel | None = None,
+        query: BaseModel | None = None,
+        correlation_id: str | None = None,
+    ) -> ResponseT:
+        """Send one request on the configured base URL.
+
+        Side-effect callers must already be inside ``execute_tool``. This method
+        does not apply a second approval gate.
+        """
+        relative = _relative_path(path)
+        resolved = _resolve_correlation_id(correlation_id)
+        body = None
+        if json_body is not None:
+            body = _json_object(json.loads(json_body.model_dump_json()))
+            if body is None:
+                raise HttpPayloadError(method=method, path=relative)
+        return await self._send(
+            method,
+            relative,
+            response_type=response_type,
+            json_body=body,
+            query=None if query is None else query.model_dump(),
+            correlation_id=resolved,
+        )
 
     async def _send[ResponseT: BaseModel](
         self,

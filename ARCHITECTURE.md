@@ -68,7 +68,7 @@ Version 2 adds four records to the same SQLite file, behind the same store:
 
 A new store is version 2. Opening a version 1 file does not create these tables. Calling a version 2 method raises `StateMigrationRequired`. `migrate_platform_state` creates the tables, sets the schema version to 2, and leaves checkpoint payloads and approval rows unchanged. The reference organisation does not register a directory and does not need the migration for its current approval flow.
 
-Opening a version 2 file also adds the phase 3 and 4 tables when they are absent: workflow delegations, child outcomes, signals, child waits, tool permissions, gates, grants, and grant uses. It adds `roles.permission_class` when that column is missing, and it narrows the one-mutating-run index to root runs. Checkpoint payloads are not rewritten. A missing core table such as `runs` still fails closed.
+Opening a version 2 file also adds the phase 3, 4, and 5 tables when they are absent: workflow delegations, child outcomes, signals, child waits, tool permissions, gates, grants, grant uses, and the GitHub binding tables. It adds `roles.permission_class` when that column is missing, signal subject columns when those are missing, and it narrows the one-mutating-run index to root runs. Checkpoint payloads are not rewritten. A missing core table such as `runs` still fails closed.
 
 ## Nested workflows
 
@@ -89,6 +89,24 @@ A gate is a named approval. It has a name, a role, a work item, a stage, the req
 `execute_tool(..., grant_id=..., grants=store)` loads that grant and checks it before a governed side effect. The tool name, argument hash, repository, and branch must fit the grant. A different hash, tool, repository, or branch does not run. An expired grant is marked expired. A grant whose work item has left the authorised status is marked invalidated. The same grant, tool, and argument hash runs at most once; a repeat returns `RepeatedGrantUse` and does not call the tool. Each use is appended to the durable ledger as `grant_used`, with the argument hash and not the argument values.
 
 Callers that omit `grant_id` keep the version 1 `ApprovalDecision` path. The reference organisation's approval workflow uses that path. Merge and release remain separate roles and separate grants from implementation.
+
+## GitHub
+
+GitHub is the source of truth for issues, branches, commits, pull requests, checks, reviews, and releases. The platform stores the identifiers and content hashes a workflow needs to resume. It does not store issue text, pull request bodies, review text, or credentials.
+
+A repository operation requires a directory entry whose remote is `https://github.com/owner/repo` or `git@github.com:owner/repo`. Any other remote, and any unknown repository, fails closed. The HTTP client uses `https://api.github.com` only. A model cannot supply a URL, a token, a remote, or a grant.
+
+GitHub App credentials stay in `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID`, and `GITHUB_PRIVATE_KEY`. The authorizer signs an app JWT and exchanges it for an installation token. That token is a `SecretString` on the authorization header. It is not written to prompts, checkpoints, ledger rows, or logs.
+
+Reads (`github.read_issue`, `github.read_pull_request`, `github.read_check`) run when the named role lists that tool. They do not require a write grant. Writes go through `execute_tool` and a grant:
+
+- `github.create_branch`, `github.create_pull_request`, `github.create_comment`, and `github.create_review` are implementation tools.
+- `github.merge_pull_request` is a merge tool.
+- `github.create_release` is a release tool.
+
+An implementation grant cannot merge or release. The default branch, `HEAD`, a `refs/` name, and any branch recorded with `protect_branch` are not implementation branches. An implementation or merge grant still has to match its branch prefix. A release grant has no branch. Creating a branch, pull request, or release a second time does not send another write. The same grant and argument hash returns `RepeatedGrantUse`.
+
+Successful writes, a merged pull request read, and a completed check publish a signal (`github_branch_created`, `github_pull_request_opened`, `github_check_completed`, `github_review_submitted`, `github_pull_request_merged`, `github_release_published`). `pause_for_signal` holds a run that already has a checkpoint. `take_github_signal` consumes the signal and moves a paused run back to `running`. Taking it again does not start another run.
 
 ## MCP and HTTP
 
