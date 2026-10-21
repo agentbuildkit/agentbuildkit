@@ -23,6 +23,8 @@ AuditKind = Literal[
     "side_effect_attempted",
     "side_effect_completed",
     "side_effect_failed",
+    "grant_used",
+    "child_outcome",
 ]
 _REDACTED_ARGUMENT = "<redacted>"
 

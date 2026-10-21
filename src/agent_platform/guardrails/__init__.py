@@ -2,7 +2,9 @@
 
 from agent_platform.guardrails.approval import (
     ApprovalDecision,
+    GrantAuthority,
     PreparedToolGuard,
+    RepeatedGrantUse,
     ToolEffect,
     ToolPolicyError,
     execute_tool,
@@ -13,7 +15,9 @@ from agent_platform.guardrails.approval import (
 
 __all__ = [
     "ApprovalDecision",
+    "GrantAuthority",
     "PreparedToolGuard",
+    "RepeatedGrantUse",
     "ToolEffect",
     "ToolPolicyError",
     "execute_tool",

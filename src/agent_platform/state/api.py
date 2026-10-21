@@ -1,17 +1,25 @@
 """Public directory, ledger, run, and work-item operations on a workflow store."""
 
 from collections.abc import Sequence
+from typing import Literal
 
 from agent_platform.observability.audit import AuditEvent
 from agent_platform.state.models import (
+    ChildOutcome,
+    ChildOutcomeStatus,
+    DelegationRecord,
+    GateRecord,
+    GrantRecord,
     LedgerRecord,
     OrganisationRecord,
+    PermissionClass,
     RepositoryRecord,
     RoleRecord,
     RunRecord,
     RunStatus,
     StateMigrationRequired,
     TeamRecord,
+    ToolPermissionRecord,
     WorkflowCatalogEntry,
     WorkItemRecord,
     WorkItemStatus,
@@ -66,9 +74,17 @@ class PlatformStateMixin:
         """Return the organisation registered for this scope."""
         return self._require_registry().get_organisation(self.scope)
 
-    def register_role(self, name: str, tools: Sequence[str] = ()) -> RoleRecord:
+    def register_role(
+        self,
+        name: str,
+        tools: Sequence[str] = (),
+        *,
+        permission_class: PermissionClass = "implementation",
+    ) -> RoleRecord:
         """Register a role and the tool names it may later be granted."""
-        return self._require_registry().register_role(self.scope, name, tools)
+        return self._require_registry().register_role(
+            self.scope, name, tools, permission_class=permission_class
+        )
 
     def get_role(self, name: str) -> RoleRecord:
         """Return one role. An unknown name fails closed."""
@@ -217,3 +233,146 @@ class PlatformStateMixin:
     def transition_run(self, run_id: str, status: RunStatus) -> RunRecord:
         """Move a run along its status machine. Pausing requires a bound checkpoint."""
         return self._require_registry().transition_run(self.scope, run_id, status)
+
+    def allow_delegation(self, parent_workflow: str, child_workflow: str) -> DelegationRecord:
+        """Allow one catalogued workflow to start another. Unknown names fail closed."""
+        return self._require_registry().allow_delegation(
+            self.scope, parent_workflow, child_workflow
+        )
+
+    def start_child_run(
+        self,
+        parent_run_id: str,
+        workflow_name: str,
+        correlation_id: str,
+        *,
+        work_item_id: str | None = None,
+        mutating: bool = False,
+        run_id: str | None = None,
+    ) -> RunRecord:
+        """Start a child run when the parent workflow is explicitly allowed to delegate."""
+        return self._require_registry().start_child_run(
+            self.scope,
+            parent_run_id,
+            workflow_name,
+            correlation_id,
+            work_item_id=work_item_id,
+            mutating=mutating,
+            run_id=run_id,
+        )
+
+    def pause_for_child(self, parent_run_id: str, child_run_id: str) -> RunRecord:
+        """Pause a parent that already has a checkpoint until the child finishes."""
+        return self._require_registry().pause_for_child(self.scope, parent_run_id, child_run_id)
+
+    def finish_child_run(self, child_run_id: str, outcome: ChildOutcomeStatus) -> ChildOutcome:
+        """Record a typed child outcome and signal the parent."""
+        return self._require_registry().finish_child_run(self.scope, child_run_id, outcome)
+
+    def get_child_outcome(self, child_run_id: str) -> ChildOutcome:
+        """Return the typed outcome for a finished child run."""
+        return self._require_registry().get_child_outcome(self.scope, child_run_id)
+
+    def take_child_outcome(self, parent_run_id: str, child_run_id: str) -> ChildOutcome:
+        """Consume the child signal and resume a paused parent."""
+        return self._require_registry().take_child_outcome(self.scope, parent_run_id, child_run_id)
+
+    def register_tool_permission(
+        self, tool_name: str, permission_class: PermissionClass
+    ) -> ToolPermissionRecord:
+        """Classify a tool as implementation, merge, or release."""
+        return self._require_registry().register_tool_permission(
+            self.scope, tool_name, permission_class
+        )
+
+    def open_gate(
+        self,
+        name: str,
+        *,
+        role: str,
+        work_item_id: str,
+        stage: str,
+        tools: Sequence[str],
+        correlation_id: str,
+        argument_hash: str,
+        run_id: str | None = None,
+        gate_id: str | None = None,
+    ) -> GateRecord:
+        """Open a named gate. Requested tools must match the role's permission class."""
+        return self._require_registry().open_gate(
+            self.scope,
+            name,
+            role=role,
+            work_item_id=work_item_id,
+            stage=stage,
+            tools=tools,
+            correlation_id=correlation_id,
+            argument_hash=argument_hash,
+            run_id=run_id,
+            gate_id=gate_id,
+        )
+
+    def decide_gate(
+        self,
+        gate_id: str,
+        *,
+        approved: bool,
+        repository: str | None = None,
+        branch_prefix: str | None = None,
+        expires_at: str | None = None,
+        grant_id: str | None = None,
+    ) -> tuple[GateRecord, GrantRecord | None]:
+        """Record a gate decision. Approval copies a grant from the gate and does not widen it."""
+        return self._require_registry().decide_gate(
+            self.scope,
+            gate_id,
+            approved=approved,
+            repository=repository,
+            branch_prefix=branch_prefix,
+            expires_at=expires_at,
+            grant_id=grant_id,
+        )
+
+    def get_gate(self, gate_id: str) -> GateRecord:
+        """Return one gate."""
+        return self._require_registry().get_gate(self.scope, gate_id)
+
+    def get_grant(self, grant_id: str) -> GrantRecord:
+        """Return one grant."""
+        return self._require_registry().get_grant(self.scope, grant_id)
+
+    def authorize_grant(
+        self,
+        grant_id: str,
+        *,
+        tool_name: str,
+        argument_hash: str,
+        repository: str | None,
+        branch: str | None,
+    ) -> Literal["authorized", "replayed"]:
+        """Reserve one grant use, or report that the same use already happened."""
+        return self._require_registry().authorize_grant(
+            self.scope,
+            grant_id,
+            tool_name=tool_name,
+            argument_hash=argument_hash,
+            repository=repository,
+            branch=branch,
+        )
+
+    def finish_grant_use(
+        self,
+        grant_id: str,
+        tool_name: str,
+        argument_hash: str,
+        *,
+        status: Literal["completed", "failed"],
+    ) -> None:
+        """Record the outcome of a reserved grant use."""
+        self._require_registry().finish_grant_use(
+            self.scope,
+            grant_id,
+            tool_name,
+            argument_hash,
+            status=status,
+        )

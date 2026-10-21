@@ -62,11 +62,33 @@ Checkpoints store hashes, identifiers, and approval metadata. They do not store 
 Version 2 adds four records to the same SQLite file, behind the same store:
 
 - **Ledger.** `append_ledger` stores an `AuditEvent`: correlation id, agent, tool, approval, outcome, kind, and argument hash. It does not store argument values. `AuditLog.add_sink` copies later in-memory events into the ledger. The in-memory log remains the process view used by evaluation.
-- **Run.** `start_run` executes one name from the workflow catalog. The status machine is `running`, then `paused`, `completed`, or `failed`. Pausing requires a checkpoint that already belongs to that run. `bind_checkpoint` checks that the checkpoint's workflow name matches the run, and that a recorded graph signature matches. One checkpoint is bound to one run. `parent_run_id` records a parent. It does not start a nested graph.
+- **Run.** `start_run` executes one name from the workflow catalog. The status machine is `running`, then `paused`, `completed`, or `failed`. Pausing requires a checkpoint that already belongs to that run. `bind_checkpoint` checks that the checkpoint's workflow name matches the run, and that a recorded graph signature matches. One checkpoint is bound to one run. `parent_run_id` records a parent. Starting a nested graph uses the delegation rules below.
 - **Directory.** One organisation per scope, then roles, a repository allowlist, a workflow catalog, and teams. A team can name only roles and workflows that are already registered. Repository remotes are `https` URLs or `git@host:path` remotes without userinfo. Registering a repository does not call it.
 - **Work item.** A draft holds a type, a title, a parent id, and a hash of the acceptance text. The acceptance text is not stored. Python moves `draft` to `ready` or `cancelled`, and `active` to `blocked`, `done`, or `cancelled` only while no mutating run holds the item. `start_run(..., mutating=True)` is the only way into `active`. A second non-terminal mutating run on that item fails closed. A read-only run may share the item. Independent work items run at the same time.
 
 A new store is version 2. Opening a version 1 file does not create these tables. Calling a version 2 method raises `StateMigrationRequired`. `migrate_platform_state` creates the tables, sets the schema version to 2, and leaves checkpoint payloads and approval rows unchanged. The reference organisation does not register a directory and does not need the migration for its current approval flow.
+
+Opening a version 2 file also adds the phase 3 and 4 tables when they are absent: workflow delegations, child outcomes, signals, child waits, tool permissions, gates, grants, and grant uses. It adds `roles.permission_class` when that column is missing, and it narrows the one-mutating-run index to root runs. Checkpoint payloads are not rewritten. A missing core table such as `runs` still fails closed.
+
+## Nested workflows
+
+`allow_delegation(parent, child)` records that one catalogued workflow may start another. Unknown names and a missing edge fail closed. `start_child_run` is the call that enforces that edge. `start_run` can still record a parent id for an existing catalogued workflow; it does not grant a second mutating holder.
+
+A child may be a mutating run on the work item its parent already holds, including a grandchild of that holder. The work item stays assigned to the original holder. Any other mutating run on that item fails closed.
+
+Short-lived nesting goes through `run_nested_workflow`. That builds a parent graph whose only step is a Microsoft Agent Framework `WorkflowExecutor` around a separate child workflow. The wrapper has its own in-memory checkpoint storage. The check refuses a child that reuses a parent executor or a parent agent instance, so the two runs do not share model session memory. A child that finishes in process records a typed outcome: `completed`, `failed`, `rejected`, or `escalated`. Rejection and escalation are raised by Python in the child workflow. They are not selected from model text.
+
+A wait that may outlive the process does not stay inside that in-memory executor. Bind a checkpoint to the parent, then `pause_for_child`. `finish_child_run` writes the typed outcome and a `child_finished` signal. After a restart, `take_child_outcome` reads that signal and moves a paused parent back to `running`. Taking the same outcome again does not start another run.
+
+## Gates and grants
+
+A gate is a named approval. It has a name, a role, a work item, a stage, the requested tool names, and a decision (`pending`, `approved`, or `rejected`). The role's permission class is one of `implementation`, `merge`, or `release`. Every requested tool must already be registered in that same class and listed on the role. A gate cannot mix implementation work with merge or release.
+
+`decide_gate` records the human decision. Approval copies a grant from the gate. The grant names the work item, role, permission class, tool names, optional repository, optional branch prefix, the work-item status it was issued for, an optional expiry, and the argument hash of the one action. The decision call does not accept a new tool list. Grant records are frozen. There is no update operation.
+
+`execute_tool(..., grant_id=..., grants=store)` loads that grant and checks it before a governed side effect. The tool name, argument hash, repository, and branch must fit the grant. A different hash, tool, repository, or branch does not run. An expired grant is marked expired. A grant whose work item has left the authorised status is marked invalidated. The same grant, tool, and argument hash runs at most once; a repeat returns `RepeatedGrantUse` and does not call the tool. Each use is appended to the durable ledger as `grant_used`, with the argument hash and not the argument values.
+
+Callers that omit `grant_id` keep the version 1 `ApprovalDecision` path. The reference organisation's approval workflow uses that path. Merge and release remain separate roles and separate grants from implementation.
 
 ## MCP and HTTP
 
@@ -89,7 +111,7 @@ MCP servers come from `McpServerConfig`. The name, transport, command, URL, and 
 - Secrets stay in the environment or a local `.env`. The image does not contain `.env`.
 - `SecretString.get_secret_value()` is called only where a client constructor needs a plain string.
 - Credentials travel through client configuration or a header provider.
-- Side effects require an allowlisted tool and a human decision.
+- Side effects require an allowlisted tool and a human decision. A governed side effect also requires a grant that names that tool.
 - Unknown routes fail closed.
 - Shared telemetry and checkpoints omit prompts, raw model responses, raw tool arguments, and credentials.
 - The container process runs as uid 10001. Durable approval state lives on the mounted data directory.

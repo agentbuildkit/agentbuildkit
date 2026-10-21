@@ -48,6 +48,7 @@ from agent_platform.state.registry import (
     MemoryRegistry,
     PlatformRegistry,
     SqliteRegistry,
+    ensure_v2_extensions,
     v2_schema_ready,
 )
 from agent_platform.workflows.runtime import (
@@ -442,6 +443,8 @@ class _SqliteBackend:
         self._commit()
         if not v2_schema_ready(self._connection):
             raise CheckpointCompatibilityError()
+        ensure_v2_extensions(self._connection)
+        self._commit()
         self._version = PLATFORM_STATE_VERSION
         self._registry = SqliteRegistry(self._connection, self._commit)
         return self._registry
@@ -503,10 +506,13 @@ class _SqliteBackend:
         elif row["platform_version"] == PLATFORM_STATE_VERSION:
             if not v2_schema_ready(self._connection):
                 raise CheckpointCompatibilityError()
+            ensure_v2_extensions(self._connection)
             self._version = PLATFORM_STATE_VERSION
         else:
             raise CheckpointCompatibilityError()
         if self._version == PLATFORM_STATE_VERSION:
+            if row is None:
+                ensure_v2_extensions(self._connection)
             self._registry = SqliteRegistry(self._connection, self._commit)
         self._connection.commit()
         self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
