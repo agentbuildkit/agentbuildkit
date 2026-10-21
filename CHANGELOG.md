@@ -6,6 +6,7 @@
 - A parent workflow can start a catalogued child only when an explicit delegation allows it. Short child graphs run through `WorkflowExecutor`. A parent can pause on a checkpoint until a typed child outcome arrives as a signal.
 - Named gates issue bounded grants. `execute_tool` checks the stored grant before a governed side effect. Implementation, merge, and release stay separate permission classes. Grant use is ledgered, and a grant ends when it expires or the work item leaves the authorised state.
 - Version 1 files remain readable for checkpoints and approvals. Runs, the ledger, and the directory stay unavailable until an explicit migration. Unknown versions are rejected. Opening an existing version 2 file adds the delegation, signal, gate, and grant tables without rewriting checkpoint payloads.
+- GitHub repository binding uses the directory allowlist, bounded grants, and `execute_tool`. Implementation, merge, and release stay separate. The platform stores GitHub identifiers and content hashes, and publishes those outcomes as signals. GitHub App credentials stay on the authorization header.
 
 ## 1.0.0
 

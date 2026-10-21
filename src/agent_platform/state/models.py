@@ -23,6 +23,68 @@ GateDecisionState = Literal["pending", "approved", "rejected"]
 GrantStatus = Literal["active", "expired", "invalidated"]
 GrantUseStatus = Literal["started", "completed", "failed"]
 SIGNAL_CHILD_FINISHED = "child_finished"
+SIGNAL_GITHUB_BRANCH_CREATED = "github_branch_created"
+SIGNAL_GITHUB_PULL_REQUEST_OPENED = "github_pull_request_opened"
+SIGNAL_GITHUB_CHECK_COMPLETED = "github_check_completed"
+SIGNAL_GITHUB_REVIEW_SUBMITTED = "github_review_submitted"
+SIGNAL_GITHUB_PULL_REQUEST_MERGED = "github_pull_request_merged"
+SIGNAL_GITHUB_RELEASE_PUBLISHED = "github_release_published"
+SignalName = Literal[
+    "child_finished",
+    "github_branch_created",
+    "github_pull_request_opened",
+    "github_check_completed",
+    "github_review_submitted",
+    "github_pull_request_merged",
+    "github_release_published",
+]
+GithubSignalStatus = Literal[
+    "created",
+    "opened",
+    "success",
+    "failure",
+    "neutral",
+    "cancelled",
+    "timed_out",
+    "action_required",
+    "skipped",
+    "stale",
+    "submitted",
+    "merged",
+    "published",
+    "pending",
+]
+SignalOutcome = ChildOutcomeStatus | GithubSignalStatus
+_GITHUB_SIGNAL_NAMES = frozenset(
+    {
+        SIGNAL_GITHUB_BRANCH_CREATED,
+        SIGNAL_GITHUB_PULL_REQUEST_OPENED,
+        SIGNAL_GITHUB_CHECK_COMPLETED,
+        SIGNAL_GITHUB_REVIEW_SUBMITTED,
+        SIGNAL_GITHUB_PULL_REQUEST_MERGED,
+        SIGNAL_GITHUB_RELEASE_PUBLISHED,
+    }
+)
+_GITHUB_SIGNAL_STATUSES = frozenset(
+    {
+        "created",
+        "opened",
+        "success",
+        "failure",
+        "neutral",
+        "cancelled",
+        "timed_out",
+        "action_required",
+        "skipped",
+        "stale",
+        "submitted",
+        "merged",
+        "published",
+        "pending",
+    }
+)
+_GITHUB_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 _TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
@@ -215,19 +277,21 @@ class ChildOutcome(BaseModel):
 
 
 class SignalRecord(BaseModel):
-    """A durable wake-up for a paused parent. The name is platform-defined."""
+    """A durable wake-up. Child runs and GitHub outcomes share this record."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     scope: str
     signal_id: str
-    name: Literal["child_finished"]
+    name: SignalName
     target_run_id: str
     source_run_id: str
     correlation_id: str
-    outcome_status: ChildOutcomeStatus
+    outcome_status: SignalOutcome
     created_at: str
     consumed_at: str | None = None
+    subject_kind: str | None = None
+    subject_id: str | None = None
 
 
 class ChildWaitRecord(BaseModel):
@@ -239,6 +303,88 @@ class ChildWaitRecord(BaseModel):
     parent_run_id: str
     child_run_id: str
     checkpoint_id: str
+    created_at: str
+
+
+class GithubBindingRecord(BaseModel):
+    """A work item bound to an allowlisted GitHub repository. Content is not stored."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    binding_id: str
+    repository: str
+    work_item_id: str
+    run_id: str | None = None
+    issue_number: int | None = None
+    issue_content_hash: str | None = None
+    created_at: str
+
+
+class GithubRefRecord(BaseModel):
+    """A branch ref and the commit SHA GitHub reported for it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    binding_id: str
+    ref: str
+    sha: str
+    created_at: str
+
+
+class GithubPullRequestRecord(BaseModel):
+    """Identifiers for one pull request. Title and body are not stored."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    binding_id: str
+    number: int
+    head_ref: str
+    head_sha: str
+    base_ref: str
+    state: Literal["open", "closed", "merged"]
+    merge_sha: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class GithubCheckRecord(BaseModel):
+    """One GitHub check identifier and its conclusion."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    binding_id: str
+    check_id: str
+    conclusion: GithubSignalStatus
+    head_sha: str
+    recorded_at: str
+
+
+class GithubReleaseRecord(BaseModel):
+    """Identifiers for one GitHub release."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    binding_id: str
+    release_id: str
+    tag: str
+    target_sha: str
+    created_at: str
+
+
+class GithubNoteRecord(BaseModel):
+    """A pull-request comment or review identifier. The text is not stored."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    binding_id: str
+    note_id: str
+    kind: Literal["comment", "review"]
     created_at: str
 
 
@@ -555,3 +701,130 @@ def assert_gate_tools(
         if registered is None or registered != role.permission_class:
             raise RegistryRejected("Gate tools are not allowed.")
     return requested
+
+
+def github_owner_repo(remote: str) -> tuple[str, str]:
+    """Return the owner and repository parsed from an allowlisted GitHub remote."""
+    cleaned = require_repository_remote(remote)
+    if cleaned.startswith("git@"):
+        host, _, raw_path = cleaned[len("git@") :].partition(":")
+        if host != "github.com":
+            raise RegistryRejected("GitHub repository is not allowlisted.")
+        path = raw_path
+    else:
+        parsed = urlsplit(cleaned)
+        if parsed.hostname != "github.com":
+            raise RegistryRejected("GitHub repository is not allowlisted.")
+        path = parsed.path
+    if path.endswith(".git"):
+        path = path[: -len(".git")]
+    parts = [part for part in path.split("/") if part]
+    if len(parts) != 2:
+        raise RegistryRejected("GitHub repository is not allowlisted.")
+    owner, repo = parts
+    if (
+        _GITHUB_NAME.fullmatch(owner) is None
+        or _GITHUB_NAME.fullmatch(repo) is None
+        or owner in {".", ".."}
+        or repo in {".", ".."}
+    ):
+        raise RegistryRejected("GitHub repository is not allowlisted.")
+    return owner, repo
+
+
+def require_sha(value: str) -> str:
+    """Accept a full Git commit SHA."""
+    lowered = value.lower()
+    if _SHA.fullmatch(lowered) is None:
+        raise RegistryRejected("GitHub commit is not allowed.")
+    return lowered
+
+
+def require_issue_number(value: object) -> int:
+    """Accept a positive GitHub issue or pull request number."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1 or value > 100_000_000:
+        raise RegistryRejected("GitHub issue is not allowed.")
+    return value
+
+
+def assert_implementation_branch(branch: str, protected: set[str]) -> str:
+    """Reject a protected, default, or ref-qualified branch."""
+    candidate = require_branch(branch)
+    if candidate.startswith("refs/") or candidate in protected or candidate == "HEAD":
+        raise RegistryRejected("Branch is protected.")
+    return candidate
+
+
+def require_github_text(value: str) -> str:
+    """Accept comment text for a governed write. The caller must not store it."""
+    if not value.strip() or len(value) > 20_000 or "\x00" in value:
+        raise RegistryRejected("GitHub text is not allowed.")
+    return value
+
+
+def require_signal_name(value: str) -> SignalName:
+    """Accept a platform-defined signal name."""
+    if value == SIGNAL_CHILD_FINISHED:
+        return SIGNAL_CHILD_FINISHED
+    if value == SIGNAL_GITHUB_BRANCH_CREATED:
+        return SIGNAL_GITHUB_BRANCH_CREATED
+    if value == SIGNAL_GITHUB_PULL_REQUEST_OPENED:
+        return SIGNAL_GITHUB_PULL_REQUEST_OPENED
+    if value == SIGNAL_GITHUB_CHECK_COMPLETED:
+        return SIGNAL_GITHUB_CHECK_COMPLETED
+    if value == SIGNAL_GITHUB_REVIEW_SUBMITTED:
+        return SIGNAL_GITHUB_REVIEW_SUBMITTED
+    if value == SIGNAL_GITHUB_PULL_REQUEST_MERGED:
+        return SIGNAL_GITHUB_PULL_REQUEST_MERGED
+    if value == SIGNAL_GITHUB_RELEASE_PUBLISHED:
+        return SIGNAL_GITHUB_RELEASE_PUBLISHED
+    raise RegistryRejected("GitHub signal is not allowed.")
+
+
+def require_signal_outcome(
+    name: SignalName,
+    outcome: str,
+    *,
+    subject_kind: str | None,
+    subject_id: str | None,
+) -> SignalOutcome:
+    """Accept the outcome that belongs to this signal name."""
+    if name == SIGNAL_CHILD_FINISHED:
+        if subject_kind is not None or subject_id is not None:
+            raise RegistryRejected("GitHub signal is not allowed.")
+        return require_child_outcome(outcome)
+    if name not in _GITHUB_SIGNAL_NAMES:
+        raise RegistryRejected("GitHub signal is not allowed.")
+    if subject_kind is None or subject_id is None:
+        raise RegistryRejected("GitHub signal is not allowed.")
+    require_token(subject_kind, "GitHub signal is not allowed.")
+    require_token(subject_id, "GitHub signal is not allowed.")
+    if outcome not in _GITHUB_SIGNAL_STATUSES:
+        raise RegistryRejected("GitHub signal is not allowed.")
+    if outcome == "created":
+        return "created"
+    if outcome == "opened":
+        return "opened"
+    if outcome == "success":
+        return "success"
+    if outcome == "failure":
+        return "failure"
+    if outcome == "neutral":
+        return "neutral"
+    if outcome == "cancelled":
+        return "cancelled"
+    if outcome == "timed_out":
+        return "timed_out"
+    if outcome == "action_required":
+        return "action_required"
+    if outcome == "skipped":
+        return "skipped"
+    if outcome == "stale":
+        return "stale"
+    if outcome == "submitted":
+        return "submitted"
+    if outcome == "merged":
+        return "merged"
+    if outcome == "published":
+        return "published"
+    return "pending"

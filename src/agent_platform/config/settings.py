@@ -9,6 +9,18 @@ from agent_framework.openai import OpenAISettings
 _REDACTED = "**********"
 
 
+class GithubSettings(TypedDict, total=False):
+    """GitHub App settings loaded from the ``GITHUB_`` prefix.
+
+    ``private_key`` stays a ``SecretString``. Callers unwrap it only when signing
+    an installation token.
+    """
+
+    app_id: str | None
+    installation_id: str | None
+    private_key: SecretString | None
+
+
 class AppSettings(TypedDict, total=False):
     """Process settings loaded from the ``APP_`` prefix.
 
@@ -32,6 +44,20 @@ def load_app_settings(
     return load_settings(
         AppSettings,
         env_prefix="APP_",
+        env_file_path=env_file_path,
+        **overrides,
+    )
+
+
+def load_github_settings(
+    *,
+    env_file_path: str | None = None,
+    **overrides: Any,
+) -> GithubSettings:
+    """Load GitHub App settings. The private key remains a ``SecretString``."""
+    return load_settings(
+        GithubSettings,
+        env_prefix="GITHUB_",
         env_file_path=env_file_path,
         **overrides,
     )

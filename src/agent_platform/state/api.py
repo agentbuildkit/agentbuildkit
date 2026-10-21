@@ -4,11 +4,18 @@ from collections.abc import Sequence
 from typing import Literal
 
 from agent_platform.observability.audit import AuditEvent
+from agent_platform.state.github import NoteKind, PullState
 from agent_platform.state.models import (
     ChildOutcome,
     ChildOutcomeStatus,
     DelegationRecord,
     GateRecord,
+    GithubBindingRecord,
+    GithubCheckRecord,
+    GithubNoteRecord,
+    GithubPullRequestRecord,
+    GithubRefRecord,
+    GithubReleaseRecord,
     GrantRecord,
     LedgerRecord,
     OrganisationRecord,
@@ -17,6 +24,7 @@ from agent_platform.state.models import (
     RoleRecord,
     RunRecord,
     RunStatus,
+    SignalRecord,
     StateMigrationRequired,
     TeamRecord,
     ToolPermissionRecord,
@@ -376,3 +384,162 @@ class PlatformStateMixin:
             argument_hash,
             status=status,
         )
+
+    def protect_branch(self, repository: str, branch: str) -> str:
+        """Record a protected branch. The default branch is always protected."""
+        return self._require_registry().protect_branch(self.scope, repository, branch)
+
+    def protected_branches(self, repository: str) -> tuple[str, ...]:
+        """Return the default branch and any extra protected branches."""
+        return self._require_registry().protected_branches(self.scope, repository)
+
+    def bind_github_repository(
+        self,
+        *,
+        repository: str,
+        work_item_id: str,
+        run_id: str | None = None,
+        issue_number: int | None = None,
+        binding_id: str | None = None,
+    ) -> GithubBindingRecord:
+        """Bind a work item to an allowlisted GitHub repository. This does not call GitHub."""
+        return self._require_registry().bind_github_repository(
+            self.scope,
+            repository=repository,
+            work_item_id=work_item_id,
+            run_id=run_id,
+            issue_number=issue_number,
+            binding_id=binding_id,
+        )
+
+    def get_github_binding(self, binding_id: str) -> GithubBindingRecord:
+        """Return one GitHub binding."""
+        return self._require_registry().get_github_binding(self.scope, binding_id)
+
+    def note_github_issue(self, binding_id: str, *, content_hash: str) -> GithubBindingRecord:
+        """Store a hash of the GitHub issue content. The text is not stored."""
+        return self._require_registry().note_github_issue(
+            self.scope, binding_id, content_hash=content_hash
+        )
+
+    def find_github_ref(self, binding_id: str, ref: str) -> GithubRefRecord | None:
+        """Return a recorded branch ref, or none when it has not been recorded."""
+        return self._require_registry().find_github_ref(self.scope, binding_id, ref)
+
+    def list_github_refs(self, binding_id: str) -> tuple[GithubRefRecord, ...]:
+        """Return branch refs recorded for one binding."""
+        return self._require_registry().list_github_refs(self.scope, binding_id)
+
+    def record_github_ref(self, binding_id: str, *, ref: str, sha: str) -> GithubRefRecord:
+        """Record a branch ref and commit SHA. Protected branches are rejected."""
+        return self._require_registry().record_github_ref(self.scope, binding_id, ref=ref, sha=sha)
+
+    def find_github_pull_request(self, binding_id: str) -> GithubPullRequestRecord | None:
+        """Return the pull request recorded for one binding."""
+        return self._require_registry().find_github_pull_request(self.scope, binding_id)
+
+    def record_github_pull_request(
+        self,
+        binding_id: str,
+        *,
+        number: int,
+        head_ref: str,
+        head_sha: str,
+        base_ref: str,
+        state: PullState,
+        merge_sha: str | None = None,
+    ) -> GithubPullRequestRecord:
+        """Record pull request identifiers. Title and body are not stored."""
+        return self._require_registry().record_github_pull_request(
+            self.scope,
+            binding_id,
+            number=number,
+            head_ref=head_ref,
+            head_sha=head_sha,
+            base_ref=base_ref,
+            state=state,
+            merge_sha=merge_sha,
+        )
+
+    def list_github_checks(self, binding_id: str) -> tuple[GithubCheckRecord, ...]:
+        """Return check identifiers recorded for one binding."""
+        return self._require_registry().list_github_checks(self.scope, binding_id)
+
+    def record_github_check(
+        self,
+        binding_id: str,
+        *,
+        check_id: str,
+        conclusion: str,
+        head_sha: str,
+    ) -> GithubCheckRecord:
+        """Record a GitHub check identifier and conclusion."""
+        return self._require_registry().record_github_check(
+            self.scope,
+            binding_id,
+            check_id=check_id,
+            conclusion=conclusion,
+            head_sha=head_sha,
+        )
+
+    def list_github_releases(self, binding_id: str) -> tuple[GithubReleaseRecord, ...]:
+        """Return releases recorded for one binding."""
+        return self._require_registry().list_github_releases(self.scope, binding_id)
+
+    def record_github_release(
+        self,
+        binding_id: str,
+        *,
+        release_id: str,
+        tag: str,
+        target_sha: str,
+    ) -> GithubReleaseRecord:
+        """Record a GitHub release identifier."""
+        return self._require_registry().record_github_release(
+            self.scope,
+            binding_id,
+            release_id=release_id,
+            tag=tag,
+            target_sha=target_sha,
+        )
+
+    def record_github_note(
+        self, binding_id: str, *, note_id: str, kind: NoteKind
+    ) -> GithubNoteRecord:
+        """Record a comment or review identifier. The text is not stored."""
+        return self._require_registry().record_github_note(
+            self.scope, binding_id, note_id=note_id, kind=kind
+        )
+
+    def publish_github_signal(
+        self,
+        *,
+        name: str,
+        target_run_id: str,
+        correlation_id: str,
+        outcome_status: str,
+        subject_kind: str,
+        subject_id: str,
+    ) -> SignalRecord:
+        """Record a GitHub outcome a workflow can consume."""
+        return self._require_registry().publish_github_signal(
+            self.scope,
+            name=name,
+            target_run_id=target_run_id,
+            correlation_id=correlation_id,
+            outcome_status=outcome_status,
+            subject_kind=subject_kind,
+            subject_id=subject_id,
+        )
+
+    def take_github_signal(self, run_id: str, signal_id: str) -> SignalRecord:
+        """Consume one GitHub signal and resume a paused run."""
+        return self._require_registry().take_github_signal(self.scope, run_id, signal_id)
+
+    def pause_for_signal(self, run_id: str) -> RunRecord:
+        """Pause a run that already has a checkpoint until a signal arrives."""
+        return self._require_registry().pause_for_signal(self.scope, run_id)
+
+    def list_signals(self, *, target_run_id: str | None = None) -> tuple[SignalRecord, ...]:
+        """Return signals in this scope, oldest first."""
+        return self._require_registry().list_signals(self.scope, target_run_id=target_run_id)

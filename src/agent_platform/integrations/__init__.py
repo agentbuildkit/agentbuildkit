@@ -1,9 +1,38 @@
 """Configured HTTP integrations.
 
 Client-specific APIs belong in the organisation package. This package supplies
-the shared client, timeouts, and approval gate.
+the shared client, timeouts, approval gate, and the governed GitHub binding.
 """
 
+from agent_platform.integrations.github import (
+    GITHUB_API_BASE_URL,
+    GITHUB_READ_TOOLS,
+    GITHUB_TOOL_PERMISSIONS,
+    TOOL_CREATE_BRANCH,
+    TOOL_CREATE_COMMENT,
+    TOOL_CREATE_PULL_REQUEST,
+    TOOL_CREATE_RELEASE,
+    TOOL_CREATE_REVIEW,
+    TOOL_MERGE_PULL_REQUEST,
+    TOOL_READ_CHECK,
+    TOOL_READ_ISSUE,
+    TOOL_READ_PULL_REQUEST,
+    GithubAppAuthorizer,
+    GithubAppCredentials,
+    GithubChecksView,
+    GithubCredentialError,
+    GithubError,
+    GithubIssueView,
+    GithubPullRequestView,
+    GithubService,
+    branch_arguments,
+    comment_arguments,
+    github_http_client,
+    github_tool_permission,
+    register_github_tool_permissions,
+    release_arguments,
+    review_arguments,
+)
 from agent_platform.integrations.http import (
     HttpApprovalRequired,
     HttpClient,
@@ -17,6 +46,26 @@ from agent_platform.integrations.http import (
 )
 
 __all__ = [
+    "GITHUB_API_BASE_URL",
+    "GITHUB_READ_TOOLS",
+    "GITHUB_TOOL_PERMISSIONS",
+    "TOOL_CREATE_BRANCH",
+    "TOOL_CREATE_COMMENT",
+    "TOOL_CREATE_PULL_REQUEST",
+    "TOOL_CREATE_RELEASE",
+    "TOOL_CREATE_REVIEW",
+    "TOOL_MERGE_PULL_REQUEST",
+    "TOOL_READ_CHECK",
+    "TOOL_READ_ISSUE",
+    "TOOL_READ_PULL_REQUEST",
+    "GithubAppAuthorizer",
+    "GithubAppCredentials",
+    "GithubChecksView",
+    "GithubCredentialError",
+    "GithubError",
+    "GithubIssueView",
+    "GithubPullRequestView",
+    "GithubService",
     "HttpApprovalRequired",
     "HttpClient",
     "HttpError",
@@ -26,4 +75,11 @@ __all__ = [
     "HttpStatusError",
     "HttpTimeoutError",
     "HttpTimeouts",
+    "branch_arguments",
+    "comment_arguments",
+    "github_http_client",
+    "github_tool_permission",
+    "register_github_tool_permissions",
+    "release_arguments",
+    "review_arguments",
 ]
