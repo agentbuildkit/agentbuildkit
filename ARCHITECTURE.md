@@ -90,8 +90,6 @@ A gate is a named approval. It has a name, a role, a work item, a stage, the req
 
 Callers that omit `grant_id` keep the version 1 `ApprovalDecision` path. The reference organisation's approval workflow uses that path. Merge and release remain separate roles and separate grants from implementation.
 
-Opening a version 2 file also adds the phase 5 GitHub tables when they are absent: repository protections, bindings, refs, pull requests, checks, releases, and notes. Signal rows gain optional subject columns. Checkpoint payloads are not rewritten.
-
 ## GitHub
 
 GitHub is the source of truth for issues, branches, commits, pull requests, checks, reviews, and releases. The platform stores the identifiers and content hashes a workflow needs to resume. It does not store issue text, pull request bodies, review text, or credentials.
