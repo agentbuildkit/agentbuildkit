@@ -6,6 +6,7 @@ tool arguments, credentials, or repository file contents.
 
 import re
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -16,6 +17,12 @@ SUPPORTED_PLATFORM_STATE_VERSIONS = ("1", "2")
 
 RunStatus = Literal["running", "paused", "completed", "failed"]
 WorkItemStatus = Literal["draft", "ready", "active", "blocked", "done", "cancelled"]
+PermissionClass = Literal["implementation", "merge", "release"]
+ChildOutcomeStatus = Literal["completed", "failed", "rejected", "escalated"]
+GateDecisionState = Literal["pending", "approved", "rejected"]
+GrantStatus = Literal["active", "expired", "invalidated"]
+GrantUseStatus = Literal["started", "completed", "failed"]
+SIGNAL_CHILD_FINISHED = "child_finished"
 
 _TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
@@ -86,6 +93,8 @@ class LedgerRecord(BaseModel):
         "side_effect_attempted",
         "side_effect_completed",
         "side_effect_failed",
+        "grant_used",
+        "child_outcome",
     ] = "tool"
 
 
@@ -127,6 +136,7 @@ class RoleRecord(BaseModel):
     scope: str
     name: str
     tools: tuple[str, ...] = ()
+    permission_class: PermissionClass = "implementation"
 
 
 class RepositoryRecord(BaseModel):
@@ -178,6 +188,122 @@ class WorkItemRecord(BaseModel):
     acceptance_hash: str
     created_at: str
     updated_at: str
+
+
+class DelegationRecord(BaseModel):
+    """An explicit permission for one workflow to start another."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    parent_workflow: str
+    child_workflow: str
+
+
+class ChildOutcome(BaseModel):
+    """Typed terminal result of a child run. No prompt or argument text."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    child_run_id: str
+    parent_run_id: str
+    workflow_name: str
+    correlation_id: str
+    status: ChildOutcomeStatus
+    created_at: str
+
+
+class SignalRecord(BaseModel):
+    """A durable wake-up for a paused parent. The name is platform-defined."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    signal_id: str
+    name: Literal["child_finished"]
+    target_run_id: str
+    source_run_id: str
+    correlation_id: str
+    outcome_status: ChildOutcomeStatus
+    created_at: str
+    consumed_at: str | None = None
+
+
+class ChildWaitRecord(BaseModel):
+    """A parent checkpoint held until one child run finishes."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    parent_run_id: str
+    child_run_id: str
+    checkpoint_id: str
+    created_at: str
+
+
+class ToolPermissionRecord(BaseModel):
+    """The single permission class of one tool name."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    tool_name: str
+    permission_class: PermissionClass
+
+
+class GateRecord(BaseModel):
+    """A named approval stage. The model cannot change its tools or role."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    gate_id: str
+    name: str
+    role: str
+    work_item_id: str
+    stage: str
+    tools: tuple[str, ...]
+    decision: GateDecisionState
+    run_id: str | None = None
+    correlation_id: str
+    argument_hash: str
+    created_at: str
+    decided_at: str | None = None
+
+
+class GrantRecord(BaseModel):
+    """Authority copied from an approved gate. It cannot be widened later."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    grant_id: str
+    gate_id: str
+    work_item_id: str
+    role: str
+    permission_class: PermissionClass
+    tools: tuple[str, ...]
+    repository: str | None = None
+    branch_prefix: str | None = None
+    authorised_status: WorkItemStatus
+    expires_at: str | None = None
+    argument_hash: str
+    status: GrantStatus
+    created_at: str
+
+
+class GrantUseRecord(BaseModel):
+    """One reserved use of a grant. The same arguments are not executed twice."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: str
+    grant_id: str
+    tool_name: str
+    argument_hash: str
+    status: GrantUseStatus
+    created_at: str
 
 
 def require_token(value: str, message: str) -> str:
@@ -335,3 +461,97 @@ def assert_run_parent(
             return
         current = parent.parent_run_id
     raise RegistryRejected("Run parent chain is not allowed.")
+
+
+def require_permission_class(value: str) -> PermissionClass:
+    """Accept one of the three permission classes."""
+    if value not in {"implementation", "merge", "release"}:
+        raise RegistryRejected("Permission class is not allowed.")
+    if value == "implementation":
+        return "implementation"
+    if value == "merge":
+        return "merge"
+    return "release"
+
+
+def require_child_outcome(value: str) -> ChildOutcomeStatus:
+    """Accept a typed child terminal status."""
+    if value == "completed":
+        return "completed"
+    if value == "failed":
+        return "failed"
+    if value == "rejected":
+        return "rejected"
+    if value == "escalated":
+        return "escalated"
+    raise RegistryRejected("Child outcome is not allowed.")
+
+
+def outcome_to_run_status(status: ChildOutcomeStatus) -> RunStatus:
+    """Map a typed child outcome onto the run status machine."""
+    if status == "completed":
+        return "completed"
+    return "failed"
+
+
+def require_timestamp(value: str) -> str:
+    """Accept a timezone-aware timestamp and return a UTC ISO value."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        raise RegistryRejected("Grant expiry is not allowed.") from None
+    if parsed.tzinfo is None:
+        raise RegistryRejected("Grant expiry is not allowed.")
+    return parsed.astimezone(UTC).isoformat()
+
+
+def timestamp_reached(expires_at: str, now: str) -> bool:
+    """True when ``now`` is at or after ``expires_at``."""
+    return datetime.fromisoformat(now) >= datetime.fromisoformat(expires_at)
+
+
+def branch_in_prefix(branch: str, prefix: str) -> bool:
+    """A branch matches a prefix exactly or as a path underneath it."""
+    candidate = require_branch(branch)
+    root = prefix.rstrip("/")
+    if candidate in {prefix, root}:
+        return True
+    return candidate.startswith(f"{root}/")
+
+
+def holder_authorizes_child(
+    records: Mapping[str, RunRecord],
+    *,
+    parent_run_id: str,
+    holder_id: str,
+) -> bool:
+    """True when the parent chain is the run that holds the work item."""
+    current: str | None = parent_run_id
+    seen: set[str] = set()
+    while current is not None and current not in seen:
+        if current == holder_id:
+            return True
+        seen.add(current)
+        parent = records.get(current)
+        if parent is None:
+            return False
+        current = parent.parent_run_id
+    return False
+
+
+def assert_gate_tools(
+    role: RoleRecord,
+    tools: Sequence[str],
+    permissions: Mapping[str, PermissionClass],
+) -> tuple[str, ...]:
+    """Tools on a gate must belong to that role and that permission class."""
+    requested = require_tools(tools)
+    if not requested:
+        raise RegistryRejected("Gate tools are not allowed.")
+    for tool_name in requested:
+        if tool_name not in role.tools:
+            raise RegistryRejected("Gate tools are not allowed.")
+        registered = permissions.get(tool_name)
+        if registered is None or registered != role.permission_class:
+            raise RegistryRejected("Gate tools are not allowed.")
+    return requested

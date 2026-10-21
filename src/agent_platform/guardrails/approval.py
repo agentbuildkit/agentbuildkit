@@ -8,7 +8,7 @@ a side-effecting tool does not run until a matching approval decision is supplie
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from enum import StrEnum
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from agent_framework import (
     Content,
@@ -17,7 +17,7 @@ from agent_framework import (
     FunctionTool,
     tool,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from agent_platform.observability.audit import (
     ApprovalState,
@@ -27,6 +27,7 @@ from agent_platform.observability.audit import (
     argument_hash,
     redact_mapping,
 )
+from agent_platform.state.models import RegistryRejected
 
 _EFFECT_KEY = "effect"
 
@@ -48,6 +49,39 @@ class ApprovalDecision:
     def __init__(self, tool_name: str, *, approved: bool) -> None:
         self.tool_name = tool_name
         self.approved = approved
+
+
+class RepeatedGrantUse(BaseModel):
+    """A governed call that was not executed again."""
+
+    model_config = ConfigDict(frozen=True)
+
+    grant_id: str
+    tool_name: str
+    argument_hash: str
+
+
+class GrantAuthority(Protocol):
+    """The store operations ``execute_tool`` uses to check a grant."""
+
+    def authorize_grant(
+        self,
+        grant_id: str,
+        *,
+        tool_name: str,
+        argument_hash: str,
+        repository: str | None,
+        branch: str | None,
+    ) -> Literal["authorized", "replayed"]: ...
+
+    def finish_grant_use(
+        self,
+        grant_id: str,
+        tool_name: str,
+        argument_hash: str,
+        *,
+        status: Literal["completed", "failed"],
+    ) -> None: ...
 
 
 def prepare_tool(
@@ -196,8 +230,15 @@ async def execute_tool(
     correlation_id: str | None = None,
     agent_name: str | None = None,
     decision: ApprovalDecision | None = None,
+    grant_id: str | None = None,
+    grants: GrantAuthority | None = None,
 ) -> Any:
-    """Run a prepared tool, or stop when approval is required and absent."""
+    """Run a prepared tool, or stop when approval is required and absent.
+
+    A ``grant_id`` is required for a governed side effect. The grant is loaded from
+    ``grants`` and checked before the tool runs. Version 1 callers omit it and keep
+    the anonymous ``ApprovalDecision`` path.
+    """
     resolved_correlation_id = correlation_id or uuid.uuid4().hex
     try:
         effect = tool_effect(function_tool)
@@ -215,6 +256,23 @@ async def execute_tool(
         )
         raise
 
+    governed_decision = decision
+    digest = argument_hash(arguments)
+    if grant_id is not None and effect is ToolEffect.SIDE_EFFECT:
+        governed_decision = _authorize_governed_call(
+            function_tool,
+            arguments,
+            audit_log=audit_log,
+            correlation_id=resolved_correlation_id,
+            agent_name=agent_name,
+            decision=decision,
+            grant_id=grant_id,
+            grants=grants,
+            argument_digest=digest,
+        )
+        if isinstance(governed_decision, RepeatedGrantUse):
+            return governed_decision
+
     context = FunctionInvocationContext(function=function_tool, arguments=dict(arguments))
     middleware: Sequence[FunctionMiddleware] = (
         tool_audit_middleware(
@@ -222,12 +280,124 @@ async def execute_tool(
             correlation_id=resolved_correlation_id,
             agent_name=agent_name,
         ),
-        _ApprovalMiddleware(decision),
+        _ApprovalMiddleware(governed_decision),
     )
-    return await _run_middleware(
-        context,
-        middleware,
-        _invoke,
+    try:
+        result = await _run_middleware(
+            context,
+            middleware,
+            _invoke,
+        )
+    except Exception:
+        if grant_id is not None and grants is not None and effect is ToolEffect.SIDE_EFFECT:
+            grants.finish_grant_use(
+                grant_id,
+                function_tool.name,
+                digest,
+                status="failed",
+            )
+        raise
+    if grant_id is not None and grants is not None and effect is ToolEffect.SIDE_EFFECT:
+        grants.finish_grant_use(
+            grant_id,
+            function_tool.name,
+            digest,
+            status="completed",
+        )
+    return result
+
+
+def _authorize_governed_call(
+    function_tool: FunctionTool,
+    arguments: Mapping[str, Any],
+    *,
+    audit_log: AuditLog,
+    correlation_id: str,
+    agent_name: str | None,
+    decision: ApprovalDecision | None,
+    grant_id: str,
+    grants: GrantAuthority | None,
+    argument_digest: str,
+) -> ApprovalDecision | RepeatedGrantUse:
+    if grants is None or (
+        decision is not None and (decision.tool_name != function_tool.name or not decision.approved)
+    ):
+        _audit_governed(
+            audit_log,
+            correlation_id=correlation_id,
+            agent_name=agent_name,
+            tool_name=function_tool.name,
+            argument_digest=argument_digest,
+            outcome="rejected",
+        )
+        if grants is None:
+            raise ToolPolicyError("A governed side effect needs a grant.")
+        raise RegistryRejected("Grant does not allow this tool.")
+    try:
+        repository, branch = _grant_scope(arguments)
+        verdict = grants.authorize_grant(
+            grant_id,
+            tool_name=function_tool.name,
+            argument_hash=argument_digest,
+            repository=repository,
+            branch=branch,
+        )
+    except (RegistryRejected, ToolPolicyError):
+        _audit_governed(
+            audit_log,
+            correlation_id=correlation_id,
+            agent_name=agent_name,
+            tool_name=function_tool.name,
+            argument_digest=argument_digest,
+            outcome="rejected",
+        )
+        raise
+    if verdict == "replayed":
+        _audit_governed(
+            audit_log,
+            correlation_id=correlation_id,
+            agent_name=agent_name,
+            tool_name=function_tool.name,
+            argument_digest=argument_digest,
+            outcome="rejected",
+        )
+        return RepeatedGrantUse(
+            grant_id=grant_id,
+            tool_name=function_tool.name,
+            argument_hash=argument_digest,
+        )
+    return ApprovalDecision(function_tool.name, approved=True)
+
+
+def _grant_scope(arguments: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    repository = arguments.get("repository")
+    branch = arguments.get("branch")
+    if repository is not None and not isinstance(repository, str):
+        raise ToolPolicyError("Grant repository must be a string.")
+    if branch is not None and not isinstance(branch, str):
+        raise ToolPolicyError("Grant branch must be a string.")
+    return repository, branch
+
+
+def _audit_governed(
+    audit_log: AuditLog,
+    *,
+    correlation_id: str,
+    agent_name: str | None,
+    tool_name: str,
+    argument_digest: str,
+    outcome: AuditOutcome,
+) -> None:
+    audit_log.record(
+        AuditEvent(
+            correlation_id=correlation_id,
+            agent_name=agent_name,
+            tool_name=tool_name,
+            approval="rejected" if outcome == "rejected" else "approved",
+            outcome=outcome,
+            argument_hash=argument_digest,
+            kind="grant_used",
+        )
     )
 
 
