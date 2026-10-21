@@ -1,5 +1,17 @@
 """Typed multi-agent workflows on Microsoft Agent Framework's graph engine."""
 
+from agent_platform.state import (
+    LedgerRecord,
+    OrganisationRecord,
+    RegistryRejected,
+    RepositoryRecord,
+    RoleRecord,
+    RunRecord,
+    StateMigrationRequired,
+    TeamRecord,
+    WorkflowCatalogEntry,
+    WorkItemRecord,
+)
 from agent_platform.workflows.patterns import (
     approval_workflow,
     concurrent_workflow,
@@ -9,6 +21,7 @@ from agent_platform.workflows.patterns import (
 )
 from agent_platform.workflows.persistence import (
     PLATFORM_STATE_VERSION,
+    SUPPORTED_PLATFORM_STATE_VERSIONS,
     CheckpointCompatibilityError,
     PendingRequest,
     WorkflowStateStore,
@@ -32,12 +45,23 @@ from agent_platform.workflows.runtime import (
 
 __all__ = [
     "PLATFORM_STATE_VERSION",
+    "SUPPORTED_PLATFORM_STATE_VERSIONS",
     "CheckpointCompatibilityError",
     "HumanApprovalRequest",
     "HumanApprovalResponse",
+    "LedgerRecord",
+    "OrganisationRecord",
     "PendingHumanInput",
     "PendingRequest",
+    "RegistryRejected",
+    "RepositoryRecord",
+    "RoleRecord",
     "RouteRejected",
+    "RunRecord",
+    "StateMigrationRequired",
+    "TeamRecord",
+    "WorkItemRecord",
+    "WorkflowCatalogEntry",
     "WorkflowEnvelope",
     "WorkflowInputError",
     "WorkflowRun",

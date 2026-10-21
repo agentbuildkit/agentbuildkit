@@ -6,7 +6,7 @@ Events store a hash of the arguments. They do not store argument values or secre
 import hashlib
 import json
 from collections.abc import Mapping
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from agent_framework import SecretString
 from pydantic import BaseModel, ConfigDict
@@ -41,14 +41,39 @@ class AuditEvent(BaseModel):
     kind: AuditKind = "tool"
 
 
+class AuditLedger(Protocol):
+    """A durable sink. Implementations must not persist argument values."""
+
+    def append_ledger(
+        self,
+        event: AuditEvent,
+        *,
+        run_id: str | None = None,
+        event_id: str | None = None,
+    ) -> object: ...
+
+
 class AuditLog:
-    """In-memory audit sink for the current process."""
+    """In-memory audit sink for the current process.
+
+    ``add_sink`` also appends each event to a durable ledger. The in-memory list
+    stays the process view used by evaluation. A sink is attached once.
+    """
 
     def __init__(self) -> None:
         self.events: list[AuditEvent] = []
+        self._sinks: list[AuditLedger] = []
+
+    def add_sink(self, sink: AuditLedger) -> None:
+        """Copy later events to a ledger. Adding the same sink twice does nothing."""
+        if any(existing is sink for existing in self._sinks):
+            return
+        self._sinks.append(sink)
 
     def record(self, event: AuditEvent) -> None:
         self.events.append(event)
+        for sink in self._sinks:
+            sink.append_ledger(event)
 
 
 def redact_arguments(value: Any) -> Any:

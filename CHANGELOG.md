@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Platform state version 2 stores a durable audit ledger, workflow runs, an organisation directory, and work items in the existing SQLite workflow file.
+- Version 1 files remain readable for checkpoints and approvals. Runs, the ledger, and the directory stay unavailable until an explicit migration. Unknown versions are rejected.
+
 ## 1.0.0
 
 First reusable release of the agent organisation template.
