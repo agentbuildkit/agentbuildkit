@@ -3,7 +3,12 @@
 The platform remains the orchestrator. A provider such as Cursor receives one
 bounded implementation assignment and works asynchronously. Bindings store
 identifiers and status, not transcripts.
+
+The service is loaded on first use. Importing this package must not pull the
+guardrails package while the state registry is still initialising.
 """
+
+from typing import TYPE_CHECKING, Any
 
 from agent_platform.external_execution.models import (
     IMPLEMENTATION_COMPLETION,
@@ -11,6 +16,8 @@ from agent_platform.external_execution.models import (
     ExecutionPolicyRecord,
     ExternalExecutionRecord,
     ImplementationAssignment,
+    ProviderBranch,
+    ProviderObservation,
     render_assignment,
 )
 from agent_platform.external_execution.provider import (
@@ -23,14 +30,47 @@ from agent_platform.external_execution.provider import (
     ExternalExecutionProvider,
     FakeExecutionProvider,
 )
-from agent_platform.external_execution.service import (
-    TOOL_DELEGATE_IMPLEMENTATION,
-    TOOL_FOLLOW_UP_IMPLEMENTATION,
-    ExecutionService,
-    delegation_arguments,
-    follow_up_arguments,
-    register_execution_tool_permissions,
+
+if TYPE_CHECKING:
+    from agent_platform.external_execution.service import (
+        TOOL_DELEGATE_IMPLEMENTATION as TOOL_DELEGATE_IMPLEMENTATION,
+    )
+    from agent_platform.external_execution.service import (
+        TOOL_FOLLOW_UP_IMPLEMENTATION as TOOL_FOLLOW_UP_IMPLEMENTATION,
+    )
+    from agent_platform.external_execution.service import (
+        ExecutionService as ExecutionService,
+    )
+    from agent_platform.external_execution.service import (
+        delegation_arguments as delegation_arguments,
+    )
+    from agent_platform.external_execution.service import (
+        follow_up_arguments as follow_up_arguments,
+    )
+    from agent_platform.external_execution.service import (
+        register_execution_tool_permissions as register_execution_tool_permissions,
+    )
+
+_SERVICE_EXPORTS = frozenset(
+    {
+        "TOOL_DELEGATE_IMPLEMENTATION",
+        "TOOL_FOLLOW_UP_IMPLEMENTATION",
+        "ExecutionService",
+        "delegation_arguments",
+        "follow_up_arguments",
+        "register_execution_tool_permissions",
+    }
 )
+
+
+def __getattr__(name: str) -> Any:
+    """Load the governed service without creating an import cycle."""
+    if name in _SERVICE_EXPORTS:
+        from agent_platform.external_execution import service
+
+        return getattr(service, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "IMPLEMENTATION_COMPLETION",
@@ -49,6 +89,8 @@ __all__ = [
     "ExternalExecutionRecord",
     "FakeExecutionProvider",
     "ImplementationAssignment",
+    "ProviderBranch",
+    "ProviderObservation",
     "delegation_arguments",
     "follow_up_arguments",
     "register_execution_tool_permissions",

@@ -4,6 +4,7 @@ import inspect
 import json
 import sqlite3
 from pathlib import Path
+from typing import Literal
 
 import httpx
 import pytest
@@ -19,6 +20,7 @@ from agent_platform.external_execution import (
     ExecutionMalformed,
     ExecutionRejected,
     ExecutionService,
+    ExternalExecutionRecord,
     FakeExecutionProvider,
     ProviderBranch,
     ProviderObservation,
@@ -793,19 +795,16 @@ def _service(
 
 
 def _observation(
-    record: object,
-    phase: str,
+    record: ExternalExecutionRecord,
+    phase: Literal["creating", "running", "completed", "failed", "cancelled", "expired"],
     *,
     branch: str = BRANCH,
     pull_request: bool = False,
 ) -> ProviderObservation:
-    external_id = record.external_id
     provider_run_id = record.provider_run_id
-    assert isinstance(external_id, str)
-    assert isinstance(provider_run_id, str)
-    assert phase in {"creating", "running", "completed", "failed", "cancelled", "expired"}
+    assert provider_run_id is not None
     return ProviderObservation(
-        external_id=external_id,
+        external_id=record.external_id,
         provider_run_id=provider_run_id,
         phase=phase,
         branches=(ProviderBranch(repository_url=REPO_URL, branch=branch),),

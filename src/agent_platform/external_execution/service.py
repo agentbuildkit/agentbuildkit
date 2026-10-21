@@ -41,6 +41,7 @@ from agent_platform.state.models import (
     SIGNAL_IMPLEMENTATION_FAILED,
     SIGNAL_IMPLEMENTATION_STARTED,
     GrantRecord,
+    PermissionClass,
     RegistryRejected,
     assert_implementation_branch,
     branch_in_prefix,
@@ -51,7 +52,7 @@ from agent_platform.workflows import WorkflowStateStore
 
 TOOL_DELEGATE_IMPLEMENTATION = "delegate_implementation"
 TOOL_FOLLOW_UP_IMPLEMENTATION = "follow_up_implementation"
-EXECUTION_TOOL_PERMISSIONS = {
+EXECUTION_TOOL_PERMISSIONS: dict[str, PermissionClass] = {
     TOOL_DELEGATE_IMPLEMENTATION: "implementation",
     TOOL_FOLLOW_UP_IMPLEMENTATION: "implementation",
 }

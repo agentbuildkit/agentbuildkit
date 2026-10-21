@@ -7,7 +7,7 @@ Provider transcripts are not stored.
 import json
 import sqlite3
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Protocol, cast
 
@@ -716,16 +716,20 @@ def _execution_from_row(row: sqlite3.Row) -> ExternalExecutionRecord:
 
 def _policy_from_row(row: sqlite3.Row) -> ExecutionPolicyRecord:
     try:
-        constraints = json.loads(str(row["constraints_json"]))
-        commands = json.loads(str(row["validation_commands_json"]))
-        if not isinstance(constraints, list) or not isinstance(commands, list):
+        parsed_constraints = json.loads(str(row["constraints_json"]))
+        parsed_commands = json.loads(str(row["validation_commands_json"]))
+        if not isinstance(parsed_constraints, list) or not isinstance(parsed_commands, list):
             raise RegistryRejected("External execution is not allowed.")
         return ExecutionPolicyRecord(
             scope=str(row["scope"]),
             repository=str(row["repository"]),
-            constraints=require_policy_lines(constraints, "External execution is not allowed."),
+            constraints=require_policy_lines(
+                cast(Sequence[object], parsed_constraints),
+                "External execution is not allowed.",
+            ),
             validation_commands=require_policy_lines(
-                commands, "External execution is not allowed."
+                cast(Sequence[object], parsed_commands),
+                "External execution is not allowed.",
             ),
         )
     except (json.JSONDecodeError, TypeError, ValidationError, RegistryRejected):

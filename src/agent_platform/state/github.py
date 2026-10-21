@@ -14,7 +14,6 @@ from typing import Literal, Protocol, cast
 from pydantic import ValidationError
 
 from agent_platform.state.models import (
-    _GITHUB_SIGNAL_NAMES,
     SIGNAL_GITHUB_CHECK_COMPLETED,
     CheckpointCompatibilityError,
     GithubBindingRecord,
@@ -33,6 +32,7 @@ from agent_platform.state.models import (
     WorkItemRecord,
     assert_implementation_branch,
     github_owner_repo,
+    is_github_signal,
     require_argument_hash,
     require_branch,
     require_issue_number,
@@ -492,7 +492,7 @@ class GithubBindings:
         if (
             signal is None
             or signal.target_run_id != run.run_id
-            or signal.name not in _GITHUB_SIGNAL_NAMES
+            or not is_github_signal(signal.name)
         ):
             raise RegistryRejected("GitHub signal is unknown.")
         if signal.consumed_at is None:

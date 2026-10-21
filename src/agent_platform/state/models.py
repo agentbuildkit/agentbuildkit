@@ -824,6 +824,11 @@ def _implementation_outcome(
     raise RegistryRejected("External execution signal is not allowed.")
 
 
+def is_github_signal(name: SignalName) -> bool:
+    """Return whether the signal belongs to the GitHub binding."""
+    return name in _GITHUB_SIGNAL_NAMES
+
+
 def require_signal_outcome(
     name: SignalName,
     outcome: str,
