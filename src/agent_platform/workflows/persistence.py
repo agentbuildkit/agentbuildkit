@@ -15,6 +15,13 @@ Checkpoints store hashes, identifiers, and approval metadata. They do not store
 argument values, prompts, model responses, or credentials. Resume rebuilds the
 workflow from the organisation's definition and supplies the arguments again.
 Those arguments must hash to the stored value. Python functions are not stored.
+
+New files are platform state version 2. Version 1 files still open for
+checkpoints, pending approvals, and side-effect reservations. Ledger, run,
+directory, and work-item calls on a version 1 file fail closed until
+``migrate_platform_state`` creates the version 2 tables and bumps the schema
+version. Checkpoint payloads written by version 1 remain readable. Unknown
+schema or payload versions are rejected.
 """
 
 import hashlib
@@ -29,6 +36,20 @@ from agent_framework import WorkflowCheckpoint, WorkflowEvent
 from pydantic import BaseModel, ConfigDict
 
 from agent_platform.observability import AuditEvent, AuditLog, argument_hash
+from agent_platform.state.api import PlatformStateMixin
+from agent_platform.state.models import (
+    PLATFORM_STATE_VERSION,
+    SUPPORTED_PLATFORM_STATE_VERSIONS,
+    CheckpointCompatibilityError,
+    RunRecord,
+)
+from agent_platform.state.registry import (
+    V2_DDL,
+    MemoryRegistry,
+    PlatformRegistry,
+    SqliteRegistry,
+    v2_schema_ready,
+)
 from agent_platform.workflows.runtime import (
     ApprovalGate,
     CompiledWorkflow,
@@ -40,18 +61,10 @@ from agent_platform.workflows.runtime import (
     run_workflow,
 )
 
-PLATFORM_STATE_VERSION = "1"
 _FRAMEWORK_CHECKPOINT_VERSION = "1.0"
 _LIFECYCLE_HASH = "lifecycle"
 PendingStatus = Literal["pending", "rejected", "completed", "failed"]
 EffectStatus = Literal["started", "completed", "failed", "rejected"]
-
-
-class CheckpointCompatibilityError(Exception):
-    """Stored state cannot be resumed by this platform version."""
-
-    def __init__(self) -> None:
-        super().__init__("Stored workflow state is incompatible with this platform version.")
 
 
 class PendingRequest(BaseModel):
@@ -119,8 +132,14 @@ class _Backend(Protocol):
 
     def finish_effect(self, *, scope: str, key: str, status: EffectStatus) -> None: ...
 
+    def platform_version(self) -> str: ...
 
-class WorkflowStateStore:
+    def platform_registry(self) -> PlatformRegistry | None: ...
+
+    def upgrade_platform_state(self) -> PlatformRegistry: ...
+
+
+class WorkflowStateStore(PlatformStateMixin):
     """Checkpoint storage plus pending approvals and side-effect reservations."""
 
     def __init__(self, backend: _Backend, *, scope: str, audit_log: AuditLog | None = None) -> None:
@@ -129,8 +148,34 @@ class WorkflowStateStore:
         self.scope = scope
         self._backend = backend
         self._audit_log = audit_log
+        self._registry = backend.platform_registry()
         self._seen_checkpoints: set[str] = set()
         self._seen_pauses: set[str] = set()
+
+    @property
+    def platform_version(self) -> str:
+        """Schema version of this store. New stores are version 2."""
+        return self._backend.platform_version()
+
+    def migrate_platform_state(self) -> str:
+        """Create version 2 tables when the file is version 1. Return the version.
+
+        Checkpoint payloads, pending approvals, and side-effect rows are left
+        as they were. A version 2 store is unchanged.
+        """
+        self._registry = self._backend.upgrade_platform_state()
+        return self.platform_version
+
+    async def bind_checkpoint(self, run_id: str, checkpoint_id: str) -> RunRecord:
+        """Point a run at an existing checkpoint for the same workflow."""
+        checkpoint = await self.load(checkpoint_id)
+        return self._require_registry().bind_checkpoint(
+            self.scope,
+            run_id,
+            checkpoint_id=checkpoint.checkpoint_id,
+            workflow_name=checkpoint.workflow_name,
+            graph_signature_hash=checkpoint.graph_signature_hash,
+        )
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> str:
         """Persist a scrubbed checkpoint and any pending approval metadata."""
@@ -276,6 +321,16 @@ class _MemoryBackend:
         self.checkpoints: dict[tuple[str, str], str] = {}
         self.pending: dict[tuple[str, str], tuple[PendingRequest, str]] = {}
         self.effects: dict[tuple[str, str], _EffectRow] = {}
+        self._registry = MemoryRegistry()
+
+    def platform_version(self) -> str:
+        return PLATFORM_STATE_VERSION
+
+    def platform_registry(self) -> PlatformRegistry | None:
+        return self._registry
+
+    def upgrade_platform_state(self) -> PlatformRegistry:
+        return self._registry
 
     def save_checkpoint(
         self,
@@ -364,7 +419,32 @@ class _SqliteBackend:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(path)
         self._connection.row_factory = sqlite3.Row
+        self._version = ""
+        self._registry: SqliteRegistry | None = None
         self._prepare()
+
+    def platform_version(self) -> str:
+        return self._version
+
+    def platform_registry(self) -> PlatformRegistry | None:
+        return self._registry
+
+    def upgrade_platform_state(self) -> PlatformRegistry:
+        if self._version == PLATFORM_STATE_VERSION and self._registry is not None:
+            return self._registry
+        if self._version != "1":
+            raise CheckpointCompatibilityError()
+        self._connection.executescript(V2_DDL)
+        self._connection.execute(
+            "UPDATE schema_meta SET platform_version = ? WHERE id = 1",
+            (PLATFORM_STATE_VERSION,),
+        )
+        self._commit()
+        if not v2_schema_ready(self._connection):
+            raise CheckpointCompatibilityError()
+        self._version = PLATFORM_STATE_VERSION
+        self._registry = SqliteRegistry(self._connection, self._commit)
+        return self._registry
 
     def _prepare(self) -> None:
         self._connection.executescript(
@@ -412,12 +492,22 @@ class _SqliteBackend:
             "SELECT platform_version FROM schema_meta WHERE id = 1"
         ).fetchone()
         if row is None:
+            self._connection.executescript(V2_DDL)
             self._connection.execute(
                 "INSERT INTO schema_meta (id, platform_version) VALUES (1, ?)",
                 (PLATFORM_STATE_VERSION,),
             )
-        elif row["platform_version"] != PLATFORM_STATE_VERSION:
+            self._version = PLATFORM_STATE_VERSION
+        elif row["platform_version"] == "1":
+            self._version = "1"
+        elif row["platform_version"] == PLATFORM_STATE_VERSION:
+            if not v2_schema_ready(self._connection):
+                raise CheckpointCompatibilityError()
+            self._version = PLATFORM_STATE_VERSION
+        else:
             raise CheckpointCompatibilityError()
+        if self._version == PLATFORM_STATE_VERSION:
+            self._registry = SqliteRegistry(self._connection, self._commit)
         self._connection.commit()
         self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
@@ -784,7 +874,7 @@ def _scrub(
 def _restore_checkpoint(encoded: str) -> WorkflowCheckpoint:
     try:
         payload = _object(encoded)
-        if payload.get("platform_version") != PLATFORM_STATE_VERSION:
+        if payload.get("platform_version") not in SUPPORTED_PLATFORM_STATE_VERSIONS:
             raise CheckpointCompatibilityError()
         workflow_name = _text(payload, "workflow_name")
         graph_hash = _text(payload, "graph_signature_hash")

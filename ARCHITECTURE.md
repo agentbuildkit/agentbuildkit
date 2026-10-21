@@ -53,7 +53,20 @@ Give each agent only the tools its job needs. In the reference team, Sam has `re
 
 `memory_workflow_store` is for a single local process. `sqlite_workflow_store` is the durable store. The CLI uses SQLite when `APP_STATE_DIRECTORY` is set, and writes `workflows.sqlite` in that directory. The container sets the variable to `/data` and expects that path to be a mounted volume.
 
-Checkpoints store hashes, identifiers, and approval metadata. They do not store argument values, prompts, model responses, or credentials. Resume rebuilds the workflow from the organisation code and requires the supplied arguments to hash to the stored value. A file from a different `PLATFORM_STATE_VERSION` is rejected.
+Checkpoints store hashes, identifiers, and approval metadata. They do not store argument values, prompts, model responses, or credentials. Resume rebuilds the workflow from the organisation code and requires the supplied arguments to hash to the stored value. A file whose schema version is not `1` or `2` is rejected. Checkpoint payloads from either of those versions stay readable, because the checkpoint body did not change.
+
+`pending_requests.run_id` is the correlation id copied by the version 1 checkpoint format. It is not a foreign key to the run registry.
+
+## Platform state version 2
+
+Version 2 adds four records to the same SQLite file, behind the same store:
+
+- **Ledger.** `append_ledger` stores an `AuditEvent`: correlation id, agent, tool, approval, outcome, kind, and argument hash. It does not store argument values. `AuditLog.add_sink` copies later in-memory events into the ledger. The in-memory log remains the process view used by evaluation.
+- **Run.** `start_run` executes one name from the workflow catalog. The status machine is `running`, then `paused`, `completed`, or `failed`. Pausing requires a checkpoint that already belongs to that run. `bind_checkpoint` checks that the checkpoint's workflow name matches the run, and that a recorded graph signature matches. One checkpoint is bound to one run. `parent_run_id` records a parent. It does not start a nested graph.
+- **Directory.** One organisation per scope, then roles, a repository allowlist, a workflow catalog, and teams. A team can name only roles and workflows that are already registered. Repository remotes are `https` URLs or `git@host:path` remotes without userinfo. Registering a repository does not call it.
+- **Work item.** A draft holds a type, a title, a parent id, and a hash of the acceptance text. The acceptance text is not stored. Python moves `draft` to `ready` or `cancelled`, and `active` to `blocked`, `done`, or `cancelled` only while no mutating run holds the item. `start_run(..., mutating=True)` is the only way into `active`. A second non-terminal mutating run on that item fails closed. A read-only run may share the item. Independent work items run at the same time.
+
+A new store is version 2. Opening a version 1 file does not create these tables. Calling a version 2 method raises `StateMigrationRequired`. `migrate_platform_state` creates the tables, sets the schema version to 2, and leaves checkpoint payloads and approval rows unchanged. The reference organisation does not register a directory and does not need the migration for its current approval flow.
 
 ## MCP and HTTP
 
@@ -65,7 +78,7 @@ MCP servers come from `McpServerConfig`. The name, transport, command, URL, and 
 
 `configure_observability` sets OpenTelemetry from `APP_` settings. Console export stays off unless `APP_ENABLE_CONSOLE_EXPORTERS` is true. Sensitive prompt and tool payloads stay off unless a caller sets `enable_sensitive_data=True`.
 
-`bind_correlation_id` puts the turn's id in a context variable. HTTP and MCP read `current_correlation_id()`. They do not take it from model output. Audit events record the correlation id, agent, tool, approval state, outcome, and a hash of the arguments. They do not record argument values or secrets.
+`bind_correlation_id` puts the turn's id in a context variable. HTTP and MCP read `current_correlation_id()`. They do not take it from model output. Audit events record the correlation id, agent, tool, approval state, outcome, and a hash of the arguments. They do not record argument values or secrets. Attaching a version 2 store with `AuditLog.add_sink` copies those same events into the durable ledger.
 
 ## Evaluation
 
