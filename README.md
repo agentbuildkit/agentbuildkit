@@ -33,6 +33,8 @@ uv sync --locked --extra foundry
 
 `src/organisation` contains a fictional B2B customer-service team: Alex classifies, Sam reads accounts, Taylor reads services, and Jordan reviews the draft. A service change pauses for a person. The business system is an in-process mock with one customer, `A-100`. This package is the working example. Replace it for a client deployment. Details are in [src/organisation/README.md](src/organisation/README.md).
 
+Organisation 001, Travelodge App, is specified and not implemented. The reference team above is still the code that runs. The discovery, the specification, and the implementation plan are in [docs/organisations/001-travelodge-app/README.md](docs/organisations/001-travelodge-app/README.md).
+
 ## Docker
 
 The image installs the locked dependencies, runs as uid 10001, and does not contain `.env`. Approval state is SQLite on `/data`.
