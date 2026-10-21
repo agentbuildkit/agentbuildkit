@@ -14,6 +14,7 @@ from typing import Literal, Protocol, cast
 from pydantic import ValidationError
 
 from agent_platform.state.models import (
+    _GITHUB_SIGNAL_NAMES,
     SIGNAL_GITHUB_CHECK_COMPLETED,
     CheckpointCompatibilityError,
     GithubBindingRecord,
@@ -209,6 +210,18 @@ class GithubBindings:
             binding_id=binding_id,
         )
         return self._write_binding(planned)
+
+    def bindings_for_work_item(
+        self, scope: str, *, repository: str, work_item_id: str
+    ) -> tuple[GithubBindingRecord, ...]:
+        self._directory.get_repository(scope, repository)
+        self._directory.get_work_item(scope, work_item_id)
+        rows = [
+            row
+            for row in self._storage.list_bindings(scope)
+            if row.repository == repository and row.work_item_id == work_item_id
+        ]
+        return tuple(sorted(rows, key=lambda row: row.binding_id))
 
     def get_binding(self, scope: str, binding_id: str) -> GithubBindingRecord:
         found = self._storage.get_binding(scope, binding_id)
@@ -476,7 +489,11 @@ class GithubBindings:
     def take_signal(self, scope: str, run_id: str, signal_id: str) -> SignalRecord:
         run = self._directory.get_run(scope, run_id)
         signal = self._storage.get_signal(scope, signal_id)
-        if signal is None or signal.target_run_id != run.run_id or signal.name == "child_finished":
+        if (
+            signal is None
+            or signal.target_run_id != run.run_id
+            or signal.name not in _GITHUB_SIGNAL_NAMES
+        ):
             raise RegistryRejected("GitHub signal is unknown.")
         if signal.consumed_at is None:
             self._storage.consume_signal(scope, signal.signal_id, _now())
@@ -552,6 +569,13 @@ class GithubRegistryMethods:
             run_id=run_id,
             issue_number=issue_number,
             binding_id=binding_id,
+        )
+
+    def github_bindings_for_work_item(
+        self, scope: str, repository: str, work_item_id: str
+    ) -> tuple[GithubBindingRecord, ...]:
+        return self._github.bindings_for_work_item(
+            scope, repository=repository, work_item_id=work_item_id
         )
 
     def get_github_binding(self, scope: str, binding_id: str) -> GithubBindingRecord:

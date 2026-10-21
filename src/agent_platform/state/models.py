@@ -29,6 +29,9 @@ SIGNAL_GITHUB_CHECK_COMPLETED = "github_check_completed"
 SIGNAL_GITHUB_REVIEW_SUBMITTED = "github_review_submitted"
 SIGNAL_GITHUB_PULL_REQUEST_MERGED = "github_pull_request_merged"
 SIGNAL_GITHUB_RELEASE_PUBLISHED = "github_release_published"
+SIGNAL_IMPLEMENTATION_STARTED = "implementation_started"
+SIGNAL_IMPLEMENTATION_COMPLETED = "implementation_completed"
+SIGNAL_IMPLEMENTATION_FAILED = "implementation_failed"
 SignalName = Literal[
     "child_finished",
     "github_branch_created",
@@ -37,6 +40,9 @@ SignalName = Literal[
     "github_review_submitted",
     "github_pull_request_merged",
     "github_release_published",
+    "implementation_started",
+    "implementation_completed",
+    "implementation_failed",
 ]
 GithubSignalStatus = Literal[
     "created",
@@ -54,7 +60,15 @@ GithubSignalStatus = Literal[
     "published",
     "pending",
 ]
-SignalOutcome = ChildOutcomeStatus | GithubSignalStatus
+ImplementationSignalStatus = Literal["started", "completed", "failed", "cancelled", "expired"]
+SignalOutcome = ChildOutcomeStatus | GithubSignalStatus | ImplementationSignalStatus
+_IMPLEMENTATION_SIGNAL_NAMES = frozenset(
+    {
+        SIGNAL_IMPLEMENTATION_STARTED,
+        SIGNAL_IMPLEMENTATION_COMPLETED,
+        SIGNAL_IMPLEMENTATION_FAILED,
+    }
+)
 _GITHUB_SIGNAL_NAMES = frozenset(
     {
         SIGNAL_GITHUB_BRANCH_CREATED,
@@ -277,7 +291,7 @@ class ChildOutcome(BaseModel):
 
 
 class SignalRecord(BaseModel):
-    """A durable wake-up. Child runs and GitHub outcomes share this record."""
+    """A durable wake-up. Child runs, GitHub, and external execution share this record."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -778,7 +792,36 @@ def require_signal_name(value: str) -> SignalName:
         return SIGNAL_GITHUB_PULL_REQUEST_MERGED
     if value == SIGNAL_GITHUB_RELEASE_PUBLISHED:
         return SIGNAL_GITHUB_RELEASE_PUBLISHED
+    if value == SIGNAL_IMPLEMENTATION_STARTED:
+        return SIGNAL_IMPLEMENTATION_STARTED
+    if value == SIGNAL_IMPLEMENTATION_COMPLETED:
+        return SIGNAL_IMPLEMENTATION_COMPLETED
+    if value == SIGNAL_IMPLEMENTATION_FAILED:
+        return SIGNAL_IMPLEMENTATION_FAILED
     raise RegistryRejected("GitHub signal is not allowed.")
+
+
+def _implementation_outcome(
+    outcome: str,
+    *,
+    subject_kind: str | None,
+    subject_id: str | None,
+) -> ImplementationSignalStatus:
+    """Accept an external-execution outcome. Provider status strings are not outcomes."""
+    if subject_kind != "external_execution" or subject_id is None:
+        raise RegistryRejected("External execution signal is not allowed.")
+    require_token(subject_id, "External execution signal is not allowed.")
+    if outcome == "started":
+        return "started"
+    if outcome == "completed":
+        return "completed"
+    if outcome == "failed":
+        return "failed"
+    if outcome == "cancelled":
+        return "cancelled"
+    if outcome == "expired":
+        return "expired"
+    raise RegistryRejected("External execution signal is not allowed.")
 
 
 def require_signal_outcome(
@@ -793,6 +836,8 @@ def require_signal_outcome(
         if subject_kind is not None or subject_id is not None:
             raise RegistryRejected("GitHub signal is not allowed.")
         return require_child_outcome(outcome)
+    if name in _IMPLEMENTATION_SIGNAL_NAMES:
+        return _implementation_outcome(outcome, subject_kind=subject_kind, subject_id=subject_id)
     if name not in _GITHUB_SIGNAL_NAMES:
         raise RegistryRejected("GitHub signal is not allowed.")
     if subject_kind is None or subject_id is None:

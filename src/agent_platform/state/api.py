@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from typing import Literal
 
+from agent_platform.external_execution.models import ExecutionPolicyRecord, ExternalExecutionRecord
 from agent_platform.observability.audit import AuditEvent
 from agent_platform.state.github import NoteKind, PullState
 from agent_platform.state.models import (
@@ -543,3 +544,98 @@ class PlatformStateMixin:
     def list_signals(self, *, target_run_id: str | None = None) -> tuple[SignalRecord, ...]:
         """Return signals in this scope, oldest first."""
         return self._require_registry().list_signals(self.scope, target_run_id=target_run_id)
+
+    def github_bindings_for_work_item(
+        self, repository: str, work_item_id: str
+    ) -> tuple[GithubBindingRecord, ...]:
+        """Return GitHub bindings for one work item and repository."""
+        return self._require_registry().github_bindings_for_work_item(
+            self.scope, repository, work_item_id
+        )
+
+    def register_execution_policy(
+        self,
+        repository: str,
+        *,
+        constraints: tuple[str, ...] | list[str] = (),
+        validation_commands: tuple[str, ...] | list[str] = (),
+    ) -> ExecutionPolicyRecord:
+        """Record repository constraints included in an implementation assignment."""
+        return self._require_registry().register_execution_policy(
+            self.scope,
+            repository,
+            constraints=constraints,
+            validation_commands=validation_commands,
+        )
+
+    def get_execution_policy(self, repository: str) -> ExecutionPolicyRecord | None:
+        """Return implementation constraints for a repository, if any were registered."""
+        return self._require_registry().get_execution_policy(self.scope, repository)
+
+    def save_external_execution(self, record: ExternalExecutionRecord) -> ExternalExecutionRecord:
+        """Insert or update one external execution binding."""
+        return self._require_registry().save_external_execution(record)
+
+    def get_external_execution(self, execution_id: str) -> ExternalExecutionRecord:
+        """Return one external execution. An unknown id fails closed."""
+        return self._require_registry().get_external_execution(self.scope, execution_id)
+
+    def get_external_execution_by_external_id(
+        self, provider: str, external_id: str
+    ) -> ExternalExecutionRecord:
+        """Return the binding for a provider execution id. Unknown ids fail closed."""
+        return self._require_registry().get_external_execution_by_external_id(
+            self.scope, provider, external_id
+        )
+
+    def find_external_execution_attempt(
+        self, grant_id: str, attempt_id: str
+    ) -> ExternalExecutionRecord | None:
+        """Return the execution reserved for one grant attempt, if it exists."""
+        return self._require_registry().find_external_execution_attempt(
+            self.scope, grant_id, attempt_id
+        )
+
+    def list_external_executions(self, work_item_id: str) -> tuple[ExternalExecutionRecord, ...]:
+        """Return external executions for one work item, oldest first."""
+        return self._require_registry().list_external_executions(self.scope, work_item_id)
+
+    def publish_execution_signal(
+        self,
+        *,
+        name: str,
+        target_run_id: str,
+        correlation_id: str,
+        outcome_status: str,
+        subject_id: str,
+    ) -> SignalRecord:
+        """Record an external execution outcome a workflow can consume."""
+        return self._require_registry().publish_execution_signal(
+            self.scope,
+            name=name,
+            target_run_id=target_run_id,
+            correlation_id=correlation_id,
+            outcome_status=outcome_status,
+            subject_id=subject_id,
+        )
+
+    def take_execution_signal(self, run_id: str, signal_id: str) -> SignalRecord:
+        """Consume one external execution signal and resume a paused run."""
+        return self._require_registry().take_execution_signal(self.scope, run_id, signal_id)
+
+    def release_unstarted_grant_use(
+        self,
+        grant_id: str,
+        tool_name: str,
+        argument_hash: str,
+        *,
+        attempt_id: str,
+    ) -> None:
+        """Allow one confirmed pre-start failure to be attempted again."""
+        self._require_registry().release_unstarted_grant_use(
+            self.scope,
+            grant_id,
+            tool_name,
+            argument_hash,
+            attempt_id=attempt_id,
+        )

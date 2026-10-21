@@ -1,9 +1,18 @@
 """Configured HTTP integrations.
 
 Client-specific APIs belong in the organisation package. This package supplies
-the shared client, timeouts, approval gate, and the governed GitHub binding.
+the shared client, timeouts, approval gate, the governed GitHub binding, and
+the Cursor Cloud Agent provider.
 """
 
+from agent_platform.integrations.cursor import (
+    CURSOR_API_BASE_URL,
+    PROVIDER_CURSOR,
+    CursorCredentials,
+    CursorExecutionProvider,
+    cursor_header_provider,
+    cursor_http_client,
+)
 from agent_platform.integrations.github import (
     GITHUB_API_BASE_URL,
     GITHUB_READ_TOOLS,
@@ -46,9 +55,11 @@ from agent_platform.integrations.http import (
 )
 
 __all__ = [
+    "CURSOR_API_BASE_URL",
     "GITHUB_API_BASE_URL",
     "GITHUB_READ_TOOLS",
     "GITHUB_TOOL_PERMISSIONS",
+    "PROVIDER_CURSOR",
     "TOOL_CREATE_BRANCH",
     "TOOL_CREATE_COMMENT",
     "TOOL_CREATE_PULL_REQUEST",
@@ -58,6 +69,8 @@ __all__ = [
     "TOOL_READ_CHECK",
     "TOOL_READ_ISSUE",
     "TOOL_READ_PULL_REQUEST",
+    "CursorCredentials",
+    "CursorExecutionProvider",
     "GithubAppAuthorizer",
     "GithubAppCredentials",
     "GithubChecksView",
@@ -77,6 +90,8 @@ __all__ = [
     "HttpTimeouts",
     "branch_arguments",
     "comment_arguments",
+    "cursor_header_provider",
+    "cursor_http_client",
     "github_http_client",
     "github_tool_permission",
     "register_github_tool_permissions",
