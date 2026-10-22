@@ -68,7 +68,7 @@ Version 2 adds four records to the same SQLite file, behind the same store:
 
 A new store is version 2. Opening a version 1 file does not create these tables. Calling a version 2 method raises `StateMigrationRequired`. `migrate_platform_state` creates the tables, sets the schema version to 2, and leaves checkpoint payloads and approval rows unchanged. The reference organisation does not register a directory and does not need the migration for its current approval flow.
 
-Opening a version 2 file also adds the phase 3, 4, and 5 tables when they are absent: workflow delegations, child outcomes, signals, child waits, tool permissions, gates, grants, grant uses, and the GitHub binding tables. It adds `roles.permission_class` when that column is missing, signal subject columns when those are missing, and it narrows the one-mutating-run index to root runs. Checkpoint payloads are not rewritten. A missing core table such as `runs` still fails closed.
+Opening a version 2 file also adds the phase 3, 4, 5, and 6 tables when they are absent: workflow delegations, child outcomes, signals, child waits, tool permissions, gates, grants, grant uses, the GitHub binding tables, and external execution bindings. It adds `roles.permission_class` when that column is missing, signal subject columns when those are missing, and it narrows the one-mutating-run index to root runs. Checkpoint payloads are not rewritten. A missing core table such as `runs` still fails closed.
 
 ## Nested workflows
 
@@ -107,6 +107,24 @@ Reads (`github.read_issue`, `github.read_pull_request`, `github.read_check`) run
 An implementation grant cannot merge or release. The default branch, `HEAD`, a `refs/` name, and any branch recorded with `protect_branch` are not implementation branches. An implementation or merge grant still has to match its branch prefix. A release grant has no branch. Creating a branch, pull request, or release a second time does not send another write. The same grant and argument hash returns `RepeatedGrantUse`.
 
 Successful writes, a merged pull request read, and a completed check publish a signal (`github_branch_created`, `github_pull_request_opened`, `github_check_completed`, `github_review_submitted`, `github_pull_request_merged`, `github_release_published`). `pause_for_signal` holds a run that already has a checkpoint. `take_github_signal` consumes the signal and moves a paused run back to `running`. Taking it again does not start another run.
+
+## External engineering execution
+
+Cursor is an execution provider. It is not the organisation orchestrator. `delegate_implementation` is an implementation-class side effect. It runs only when an active grant names that tool, the work item, the repository, the branch prefix, and the current work-item state. The service derives the repository and the one authorised branch from the work item, its GitHub binding, and the grant. The model cannot supply a repository, a branch, a remote, or a credential.
+
+The provider receives one `ImplementationAssignment`: work item, objective, acceptance source, repository URL, authorised branch, registered constraints, validation commands, fixed prohibitions, and the required completion line. The assignment does not include grants, approval metadata, credentials, or unrelated organisation state. The platform stores a hash of that assignment, not the text.
+
+The binding stores the provider name, the external agent id, the provider run id, the organisation, work item, run, repository, branch, grant, attempt, status, and hashes. Cursor keeps the transcript. GitHub keeps the file contents. `implementation_started`, `implementation_completed`, and `implementation_failed` are the signals a paused run consumes. Taking the same signal twice does not start another run. An unknown external id fails closed.
+
+The Cloud Agents API v1 differs from a free-form branch grant:
+
+- The caller cannot name the branch Cursor creates. When automatic branching is left on, Cursor pushes a `cursor/...` branch. Delegation sets `workOnCurrentBranch` and `startingRef` to the branch Phase 5 already recorded, so commits stay on that branch. A completion whose pushed branch or repository does not match is a failure.
+- `autoCreatePR` can open a pull request outside `github.create_pull_request`. Delegation always sends `false`. A reported pull request is a failure, not a governed pull request. Merge and release are not Cloud Agent operations and stay on the Phase 5 grants.
+- v1 has no webhooks. The service returns after the agent id is stored. A later `observe_execution` reads `GET /v1/agents/{id}/runs/{runId}` and publishes the signal. The workflow does not hold a stream open. There is no first-party Python SDK in this repository; the client is the documented HTTP API.
+- Create accepts a client-supplied `bc-<uuid>` agent id and returns `409` when that id already exists. A startup failure may retry that same id only after a read shows the agent was not created. Once an agent exists, a later failure does not start another one. A follow-up is a new run on the same agent and needs a new grant and attempt id.
+- Cancel stops the current run. It does not delete the agent or grant merge rights. Agent status `ACTIVE` or `IDLE` is not the execution result; the run status is.
+
+A startup failure, a lost response, a malformed payload, and a duplicate completion stay distinct. Lost contact does not start a second agent. A malformed payload is not treated as success.
 
 ## MCP and HTTP
 

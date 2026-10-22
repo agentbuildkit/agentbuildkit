@@ -13,6 +13,13 @@ from typing import Literal, Protocol, cast
 
 from pydantic import ValidationError
 
+from agent_platform.external_execution.binding import (
+    ExecutionBindings,
+    ExecutionRegistryMethods,
+    MemoryExecutionStorage,
+    SqliteExecutionStorage,
+)
+from agent_platform.external_execution.models import ExecutionPolicyRecord, ExternalExecutionRecord
 from agent_platform.observability import argument_hash
 from agent_platform.observability.audit import AuditEvent
 from agent_platform.state.github import (
@@ -102,6 +109,8 @@ V2_EXTENSION_TABLES = (
     "github_checks",
     "github_releases",
     "github_notes",
+    "external_executions",
+    "execution_policies",
 )
 V2_TABLES = V2_CORE_TABLES + V2_EXTENSION_TABLES
 V2_INDEXES = ("runs_one_mutating", "runs_one_checkpoint", "teams_name")
@@ -339,6 +348,42 @@ CREATE TABLE IF NOT EXISTS github_notes (
     kind TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY (scope, binding_id, note_id)
+);
+CREATE TABLE IF NOT EXISTS external_executions (
+    scope TEXT NOT NULL,
+    execution_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    provider_run_id TEXT,
+    organisation TEXT NOT NULL,
+    work_item_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    repository TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    grant_id TEXT NOT NULL,
+    attempt_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    argument_hash TEXT NOT NULL,
+    assignment_hash TEXT NOT NULL,
+    observation_hash TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    PRIMARY KEY (scope, execution_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS external_executions_attempt
+    ON external_executions(scope, grant_id, attempt_id);
+CREATE UNIQUE INDEX IF NOT EXISTS external_executions_provider
+    ON external_executions(scope, provider, external_id);
+CREATE UNIQUE INDEX IF NOT EXISTS external_executions_one_live
+    ON external_executions(scope, work_item_id)
+    WHERE status IN ('starting', 'running', 'lost_contact');
+CREATE TABLE IF NOT EXISTS execution_policies (
+    scope TEXT NOT NULL,
+    repository TEXT NOT NULL,
+    constraints_json TEXT NOT NULL,
+    validation_commands_json TEXT NOT NULL,
+    PRIMARY KEY (scope, repository)
 );
 """
 
@@ -658,6 +703,62 @@ class PlatformRegistry(Protocol):
         self, scope: str, *, target_run_id: str | None = None
     ) -> tuple[SignalRecord, ...]: ...
 
+    def github_bindings_for_work_item(
+        self, scope: str, repository: str, work_item_id: str
+    ) -> tuple[GithubBindingRecord, ...]: ...
+
+    def register_execution_policy(
+        self,
+        scope: str,
+        repository: str,
+        *,
+        constraints: tuple[str, ...] | list[str],
+        validation_commands: tuple[str, ...] | list[str],
+    ) -> ExecutionPolicyRecord: ...
+
+    def get_execution_policy(self, scope: str, repository: str) -> ExecutionPolicyRecord | None: ...
+
+    def save_external_execution(
+        self, record: ExternalExecutionRecord
+    ) -> ExternalExecutionRecord: ...
+
+    def get_external_execution(self, scope: str, execution_id: str) -> ExternalExecutionRecord: ...
+
+    def get_external_execution_by_external_id(
+        self, scope: str, provider: str, external_id: str
+    ) -> ExternalExecutionRecord: ...
+
+    def find_external_execution_attempt(
+        self, scope: str, grant_id: str, attempt_id: str
+    ) -> ExternalExecutionRecord | None: ...
+
+    def list_external_executions(
+        self, scope: str, work_item_id: str
+    ) -> tuple[ExternalExecutionRecord, ...]: ...
+
+    def publish_execution_signal(
+        self,
+        scope: str,
+        *,
+        name: str,
+        target_run_id: str,
+        correlation_id: str,
+        outcome_status: str,
+        subject_id: str,
+    ) -> SignalRecord: ...
+
+    def take_execution_signal(self, scope: str, run_id: str, signal_id: str) -> SignalRecord: ...
+
+    def release_unstarted_grant_use(
+        self,
+        scope: str,
+        grant_id: str,
+        tool_name: str,
+        argument_hash: str,
+        *,
+        attempt_id: str,
+    ) -> None: ...
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -738,12 +839,16 @@ class _MemoryTables:
         self.grant_uses: dict[tuple[str, str, str, str], GrantUseRecord] = {}
 
 
-class MemoryRegistry(GithubRegistryMethods):
+class MemoryRegistry(GithubRegistryMethods, ExecutionRegistryMethods):
     """In-process registry. A new memory store is already version 2."""
 
     def __init__(self) -> None:
         self._tables = _MemoryTables()
         self._github = GithubBindings(MemoryGithubStorage(self._tables.signals), self)
+        self._executions = ExecutionBindings(
+            MemoryExecutionStorage(self._tables.signals),
+            self,
+        )
 
     def append_ledger(
         self,
@@ -1354,6 +1459,15 @@ class MemoryRegistry(GithubRegistryMethods):
         outcome: Literal["completed", "failed"] = status
         self._record_grant_use(grant, tool_name, argument_hash, outcome=outcome)
 
+    def _delete_failed_grant_use(
+        self, scope: str, grant_id: str, tool_name: str, argument_hash: str
+    ) -> None:
+        key = (scope, grant_id, tool_name, argument_hash)
+        current = self._tables.grant_uses.get(key)
+        if current is None or current.status != "failed":
+            raise RegistryRejected("Grant is not active.")
+        del self._tables.grant_uses[key]
+
     def _insert_run(
         self,
         scope: str,
@@ -1757,13 +1871,14 @@ def _bind(
     return current.model_copy(update={"checkpoint_id": token, "updated_at": _now()})
 
 
-class SqliteRegistry(GithubRegistryMethods):
+class SqliteRegistry(GithubRegistryMethods, ExecutionRegistryMethods):
     """Registry tables on the workflow store connection."""
 
     def __init__(self, connection: sqlite3.Connection, commit: Callable[[], None]) -> None:
         self._connection = connection
         self._commit = commit
         self._github = GithubBindings(SqliteGithubStorage(connection, commit), self)
+        self._executions = ExecutionBindings(SqliteExecutionStorage(connection, commit), self)
 
     def append_ledger(
         self,
@@ -2591,6 +2706,21 @@ class SqliteRegistry(GithubRegistryMethods):
             self, self.get_grant(scope, grant_id), tool_name, argument_hash, outcome=status
         )
 
+    def _delete_failed_grant_use(
+        self, scope: str, grant_id: str, tool_name: str, argument_hash: str
+    ) -> None:
+        current = self._grant_use(scope, grant_id, tool_name, argument_hash)
+        if current is None or current.status != "failed":
+            raise RegistryRejected("Grant is not active.")
+        self._connection.execute(
+            """
+            DELETE FROM grant_uses
+            WHERE scope = ? AND grant_id = ? AND tool_name = ? AND argument_hash = ?
+            """,
+            (scope, grant_id, tool_name, argument_hash),
+        )
+        self._commit()
+
     def _prepare_work_item(
         self,
         scope: str,
@@ -3339,7 +3469,7 @@ def v2_schema_ready(connection: sqlite3.Connection) -> bool:
 
 
 def ensure_v2_extensions(connection: sqlite3.Connection) -> None:
-    """Add phase 3, 4, and 5 tables to an existing version 2 file.
+    """Add phase 3, 4, 5, and 6 tables to an existing version 2 file.
 
     Checkpoint payloads are not rewritten. Core tables that are already missing
     stay missing so a damaged file is not rebuilt.
@@ -3496,6 +3626,42 @@ def ensure_v2_extensions(connection: sqlite3.Connection) -> None:
             kind TEXT NOT NULL,
             created_at TEXT NOT NULL,
             PRIMARY KEY (scope, binding_id, note_id)
+        );
+        CREATE TABLE IF NOT EXISTS external_executions (
+            scope TEXT NOT NULL,
+            execution_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            provider_run_id TEXT,
+            organisation TEXT NOT NULL,
+            work_item_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            repository TEXT NOT NULL,
+            branch TEXT NOT NULL,
+            grant_id TEXT NOT NULL,
+            attempt_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            argument_hash TEXT NOT NULL,
+            assignment_hash TEXT NOT NULL,
+            observation_hash TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT,
+            PRIMARY KEY (scope, execution_id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS external_executions_attempt
+            ON external_executions(scope, grant_id, attempt_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS external_executions_provider
+            ON external_executions(scope, provider, external_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS external_executions_one_live
+            ON external_executions(scope, work_item_id)
+            WHERE status IN ('starting', 'running', 'lost_contact');
+        CREATE TABLE IF NOT EXISTS execution_policies (
+            scope TEXT NOT NULL,
+            repository TEXT NOT NULL,
+            constraints_json TEXT NOT NULL,
+            validation_commands_json TEXT NOT NULL,
+            PRIMARY KEY (scope, repository)
         );
         """
     )

@@ -8,6 +8,7 @@ MODULES = [
     "agent_platform.agents",
     "agent_platform.config",
     "agent_platform.evaluation",
+    "agent_platform.external_execution",
     "agent_platform.guardrails",
     "agent_platform.integrations",
     "agent_platform.mcp",

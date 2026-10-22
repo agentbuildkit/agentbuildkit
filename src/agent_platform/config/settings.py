@@ -9,6 +9,16 @@ from agent_framework.openai import OpenAISettings
 _REDACTED = "**********"
 
 
+class CursorSettings(TypedDict, total=False):
+    """Cursor Cloud Agent settings loaded from the ``CURSOR_`` prefix.
+
+    ``api_key`` stays a ``SecretString``. Callers unwrap it only when building
+    the authorization header.
+    """
+
+    api_key: SecretString | None
+
+
 class GithubSettings(TypedDict, total=False):
     """GitHub App settings loaded from the ``GITHUB_`` prefix.
 
@@ -44,6 +54,20 @@ def load_app_settings(
     return load_settings(
         AppSettings,
         env_prefix="APP_",
+        env_file_path=env_file_path,
+        **overrides,
+    )
+
+
+def load_cursor_settings(
+    *,
+    env_file_path: str | None = None,
+    **overrides: Any,
+) -> CursorSettings:
+    """Load Cursor API settings. The API key remains a ``SecretString``."""
+    return load_settings(
+        CursorSettings,
+        env_prefix="CURSOR_",
         env_file_path=env_file_path,
         **overrides,
     )
