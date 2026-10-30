@@ -33,13 +33,18 @@ _PENDING_KEY = "pending"
 
 
 class WorkflowEnvelope(BaseModel):
-    """One typed payload moving between workflow steps."""
+    """One typed payload moving between workflow steps.
+
+    ``route`` is set from a manager's validated decision. Other workflows leave
+    it empty. Specialist output stays in ``body``.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     correlation_id: str
     source: str
     body: dict[str, Any]
+    route: str | None = None
 
 
 class HumanApprovalRequest(BaseModel):
@@ -72,6 +77,16 @@ class WorkflowInputError(Exception):
 
 class WorkflowRunError(Exception):
     """The workflow finished without a usable typed result."""
+
+
+def _validated_route(result: BaseModel, route_field: str | None) -> str | None:
+    """Return one field from a validated agent output. Missing values stay empty."""
+    if route_field is None:
+        return None
+    value = getattr(result, route_field, None)
+    if isinstance(value, str) and value != "":
+        return value
+    return None
 
 
 def envelope(correlation_id: str, data: BaseModel, *, source: str = "input") -> WorkflowEnvelope:
@@ -111,12 +126,23 @@ class CompiledWorkflow:
 
 
 class AgentStep(Executor):
-    """Run one platform agent and pass its validated output onward."""
+    """Run one platform agent and pass its validated output onward.
 
-    def __init__(self, agent: PlatformAgent[Any, Any], *, terminal: bool) -> None:
+    When ``route_field`` is set, the step copies that field from the agent's
+    validated output onto the envelope. Later steps keep that value.
+    """
+
+    def __init__(
+        self,
+        agent: PlatformAgent[Any, Any],
+        *,
+        terminal: bool,
+        route_field: str | None = None,
+    ) -> None:
         super().__init__(id=agent.definition.name)
         self._agent = agent
         self._terminal = terminal
+        self._route_field = route_field
 
     @handler
     async def handle(
@@ -139,6 +165,7 @@ class AgentStep(Executor):
             correlation_id=message.correlation_id,
             source=self.id,
             body=result.model_dump(),
+            route=_validated_route(result, self._route_field) or message.route,
         )
         if self._terminal:
             await ctx.yield_output(outgoing)

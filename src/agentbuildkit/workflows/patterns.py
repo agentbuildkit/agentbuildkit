@@ -105,12 +105,16 @@ def manager_workflow(
     name: str,
     route_field: str = "specialist",
 ) -> CompiledWorkflow:
-    """Let a manager emit a typed decision, then route only to an allowlisted specialist."""
+    """Let a manager emit a typed decision, then route only to an allowlisted specialist.
+
+    The workflow result keeps the specialist output in ``body`` and the manager's
+    validated route field on ``route``.
+    """
     if not specialists:
         raise ValueError("A manager workflow needs at least one specialist.")
     names = [manager.definition.name, *[agent.definition.name for agent in specialists.values()]]
     _require_unique(names)
-    manager_step = AgentStep(manager, terminal=False)
+    manager_step = AgentStep(manager, terminal=False, route_field=route_field)
     reject = RejectRoute()
     steps = {route: AgentStep(agent, terminal=True) for route, agent in specialists.items()}
     cases = [

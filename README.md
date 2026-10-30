@@ -2,17 +2,22 @@
 
 Build agents. Not demos.
 
-AgentBuildKit is an open-source Python harness for building reliable AI agents. Workflows, tool boundaries, guardrails, evaluations, and human approval are enforced in code. A model may propose a decision. Python decides whether that decision is allowed to run.
+AgentBuildKit is an open-source Python harness for building reliable AI agents with tools, workflows, guardrails, evaluations and human approval.
 
-The current release is an unreleased development version, `0.1.0.dev0`.
+## Try it
 
-## What exists today
+```bash
+uv sync
+uv run agentkit demo
+```
 
-The core package is `agentbuildkit`. It provides typed agent inputs and outputs, deterministic route checks, per-agent tool allowlists, read versus side-effect classification, human approval, SQLite pause and resume, argument hashing, at-most-once side-effect execution, HTTP and MCP allowlists, an offline evaluation runner, correlation ids, audit events, and OpenTelemetry export.
+The demo is offline. It does not call a model provider and it does not need an API key.
 
-`examples/customer_service` is a demonstration team. It is not part of the harness. Alex classifies a request, Python routes it to Sam or Taylor, and Jordan reviews the draft. Reference `A-100` and the account name Northwind are fixture data. The business API is an in-process mock at `http://business.test`. It does not call a CRM or a live customer-service backend.
+`uv run agentkit doctor` checks the local installation. Missing provider keys do not block the demo. `uv run agentkit version` prints the installed package version.
 
-Each agent declares its own provider and model on `AgentDefinition`. The provider registry builds the chat client for that pair. OpenAI and Anthropic are the built-in providers, and one workflow can mix them. `create_agent` still receives the client from the caller, and `build_team(clients=...)` still accepts one client per role, so tests inject `ScriptedChatClient` without constructing a live provider.
+## Providers
+
+Each agent declares its own provider and model. OpenAI and Anthropic are the built-in providers, and one workflow can mix them. The offline demo uses scripted clients, so those calls are not OpenAI or Anthropic requests. A production agent selects a provider when its client is constructed:
 
 ```python
 from agentbuildkit.providers import ProviderConfiguration, builtin_registry
@@ -24,7 +29,13 @@ taylor = registry.create_client(
 )
 ```
 
-Constructing those clients needs the matching API key. The workflow that receives the clients does not branch on the provider.
+Constructing those clients needs the matching API key in the environment. The workflow that receives the clients does not branch on the provider.
+
+## What exists today
+
+The core package is `agentbuildkit`. It provides typed agent inputs and outputs, deterministic route checks, per-agent tool allowlists, read versus side-effect classification, human approval, SQLite pause and resume, argument hashing, at-most-once side-effect execution, HTTP and MCP allowlists, an offline evaluation runner, correlation ids, audit events, and OpenTelemetry export. `agentkit` is the command-line entry point.
+
+`examples/customer_service` is a separate example. It is not part of the harness and it is not the offline demo. Alex classifies a request, Python routes it to Sam or Taylor, and Jordan reviews the draft. Reference `A-100` and the account name Northwind are fixture data. The business API is an in-process mock at `http://business.test`. It does not call a CRM or a live customer-service backend.
 
 ## Current limitations
 
