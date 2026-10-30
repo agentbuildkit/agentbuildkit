@@ -15,6 +15,8 @@ def test_docker_build_excludes_env_and_runs_as_non_root() -> None:
     assert "uv sync --locked --no-dev --no-install-project" in dockerfile
     assert "uv sync --locked --no-dev --no-editable" in dockerfile
     assert "COPY --from=build --chown=app:app /app/.venv /app/.venv" in dockerfile
-    assert 'CMD ["python", "-m", "organisation.health"]' in dockerfile
+    assert "PYTHONPATH=/app/examples" in dockerfile
+    assert "COPY --chown=app:app examples ./examples" in dockerfile
+    assert 'CMD ["python", "-m", "customer_service.health"]' in dockerfile
     assert "APP_STATE_DIRECTORY=/data" in dockerfile
     assert "COPY .env" not in dockerfile

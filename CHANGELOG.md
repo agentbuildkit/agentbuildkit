@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- OpenAI and Anthropic are built-in providers. Each agent declares its own provider and model, and one workflow can mix both. Tests can still inject a scripted client. An agent run records the provider and model ids, not credentials.
+- The reusable package is `agentbuildkit` at `0.1.0.dev0`. The customer-service team is the example in `examples/customer_service`, and its business system is fixture data.
 - Platform state version 2 stores a durable audit ledger, workflow runs, an organisation directory, and work items in the existing SQLite workflow file.
 - A parent workflow can start a catalogued child only when an explicit delegation allows it. Short child graphs run through `WorkflowExecutor`. A parent can pause on a checkpoint until a typed child outcome arrives as a signal.
 - Named gates issue bounded grants. `execute_tool` checks the stored grant before a governed side effect. Implementation, merge, and release stay separate permission classes. Grant use is ledgered, and a grant ends when it expires or the work item leaves the authorised state.

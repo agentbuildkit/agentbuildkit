@@ -5,25 +5,23 @@ from pathlib import Path
 import pytest
 from agent_framework import SecretString
 
-from agent_platform.agents import AgentOutputError
-from agent_platform.observability import AuditEvent, AuditLog
-from agent_platform.workflows import memory_workflow_store
-from organisation.cli import (
-    DEFAULT_CHAT_MODEL,
-    OrganisationConfigError,
+from agentbuildkit.agents import AgentOutputError
+from agentbuildkit.observability import AuditEvent, AuditLog
+from agentbuildkit.providers import ProviderError
+from agentbuildkit.workflows import memory_workflow_store
+from customer_service.cli import (
     approval_from_text,
     open_workflow_store,
     render_approval,
     render_failure,
     render_outcome,
-    resolve_settings,
     run_session,
     state_directory,
 )
-from organisation.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
-from organisation.models import CustomerRequest, FinalOutcome
-from organisation.service import ServiceResult
-from organisation.team import ORGANISATION_SCOPE, build_team
+from customer_service.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
+from customer_service.models import CustomerRequest, FinalOutcome
+from customer_service.service import ServiceResult
+from customer_service.team import ORGANISATION_SCOPE, build_team, production_clients
 
 _OPENAI_KEYS = (
     "OPENAI_API_KEY",
@@ -46,36 +44,15 @@ def _clear_openai_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_missing_api_key_is_rejected_without_echoing_a_secret(tmp_path: Path) -> None:
     env_file = tmp_path / ".env"
-    env_file.write_text("OPENAI_CHAT_MODEL=gpt-4.1-mini\n", encoding="utf-8")
+    env_file.write_text("OPENAI_CHAT_MODEL=sk-should-not-appear\n", encoding="utf-8")
 
-    with pytest.raises(OrganisationConfigError) as caught:
-        resolve_settings(env_file)
+    with pytest.raises(ProviderError) as caught:
+        production_clients(env_file_path=str(env_file))
 
-    assert "OPENAI_API_KEY" in str(caught.value)
-    assert "sk-" not in str(caught.value)
-    assert LOCAL_MOCK_TOKEN not in str(caught.value)
-
-
-def test_chat_model_comes_from_configuration(tmp_path: Path) -> None:
-    env_file = tmp_path / ".env"
-    env_file.write_text(
-        "OPENAI_API_KEY=local-test-key\nOPENAI_CHAT_MODEL=gpt-test-local\n",
-        encoding="utf-8",
-    )
-
-    settings = resolve_settings(env_file)
-
-    assert settings.get("chat_model") == "gpt-test-local"
-    assert isinstance(settings.get("api_key"), SecretString)
-
-
-def test_chat_model_defaults_when_unset(tmp_path: Path) -> None:
-    env_file = tmp_path / ".env"
-    env_file.write_text("OPENAI_API_KEY=local-test-key\n", encoding="utf-8")
-
-    settings = resolve_settings(env_file)
-
-    assert settings.get("chat_model") == DEFAULT_CHAT_MODEL
+    message = str(caught.value)
+    assert "OPENAI_API_KEY" in message
+    assert "sk-" not in message
+    assert LOCAL_MOCK_TOKEN not in message
 
 
 def test_failure_line_names_the_agent_and_hides_secrets() -> None:
@@ -218,14 +195,14 @@ def test_health_check_imports_without_an_api_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("APP_STATE_DIRECTORY", str(tmp_path))
-    from organisation.health import check
+    from customer_service.health import check
 
     assert check() == 0
 
 
 def test_health_check_rejects_a_missing_state_directory(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_STATE_DIRECTORY", "/missing/workflow-state")
-    from organisation.health import check
+    from customer_service.health import check
 
     assert check() == 1
 

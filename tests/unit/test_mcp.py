@@ -7,8 +7,8 @@ import pytest
 from agent_framework import MCPStdioTool, MCPStreamableHTTPTool
 from pydantic import ValidationError
 
-from agent_platform.guardrails import ApprovalDecision, ToolEffect
-from agent_platform.mcp import (
+from agentbuildkit.guardrails import ApprovalDecision, ToolEffect
+from agentbuildkit.mcp import (
     McpApprovalRequired,
     McpCapability,
     McpPolicyError,
@@ -17,7 +17,7 @@ from agent_platform.mcp import (
     McpServerConfig,
     McpTransport,
 )
-from agent_platform.observability import AuditLog
+from agentbuildkit.observability import AuditLog
 
 SECRET = "sk-live-mcp-secret"
 

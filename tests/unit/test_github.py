@@ -12,8 +12,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import BaseModel
 
-from agent_platform.guardrails import RepeatedGrantUse, ToolEffect, prepare_tool
-from agent_platform.integrations import (
+from agentbuildkit.guardrails import RepeatedGrantUse, ToolEffect, prepare_tool
+from agentbuildkit.integrations import (
     TOOL_CREATE_BRANCH,
     TOOL_CREATE_COMMENT,
     TOOL_CREATE_PULL_REQUEST,
@@ -38,9 +38,9 @@ from agent_platform.integrations import (
     release_arguments,
     review_arguments,
 )
-from agent_platform.observability import AuditLog, argument_hash
-from agent_platform.state.models import GrantRecord, RegistryRejected
-from agent_platform.workflows import (
+from agentbuildkit.observability import AuditLog, argument_hash
+from agentbuildkit.state.models import GrantRecord, RegistryRejected
+from agentbuildkit.workflows import (
     PendingHumanInput,
     WorkflowStateStore,
     approval_workflow,
@@ -778,7 +778,7 @@ async def test_existing_version_2_file_gains_github_tables(tmp_path: Path) -> No
 def test_github_settings_keep_the_private_key_secret(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from agent_platform.config import load_github_settings, redacted_settings
+    from agentbuildkit.config import load_github_settings, redacted_settings
 
     monkeypatch.delenv("GITHUB_APP_ID", raising=False)
     monkeypatch.delenv("GITHUB_INSTALLATION_ID", raising=False)

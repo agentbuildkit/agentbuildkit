@@ -3,7 +3,7 @@
 import pytest
 from agent_framework import Message
 
-from agent_platform.testing import ScriptedChatClient
+from agentbuildkit.testing import ScriptedChatClient
 
 
 async def test_scripted_client_returns_responses_in_order() -> None:

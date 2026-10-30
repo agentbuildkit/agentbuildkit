@@ -6,11 +6,11 @@ import pytest
 from agent_framework import FunctionTool, tool
 from pydantic import BaseModel
 
-from agent_platform.agents import AgentDefinition, AgentOutputError, PlatformAgent, create_agent
-from agent_platform.guardrails import ToolEffect, ToolPolicyError, prepare_tool
-from agent_platform.observability import AuditLog
-from agent_platform.testing import ScriptedChatClient
-from agent_platform.workflows import (
+from agentbuildkit.agents import AgentDefinition, AgentOutputError, PlatformAgent, create_agent
+from agentbuildkit.guardrails import ToolEffect, ToolPolicyError, prepare_tool
+from agentbuildkit.observability import AuditLog
+from agentbuildkit.testing import ScriptedChatClient
+from agentbuildkit.workflows import (
     HumanApprovalResponse,
     RouteRejected,
     WorkflowInputError,
@@ -99,6 +99,8 @@ def _agent(
             instructions=f"You are {name}. Reply with the output schema.",
             input_type=input_type,
             output_type=output_type,
+            provider="openai",
+            model="offline-model",
             tools=tools,
         ),
         client=client,

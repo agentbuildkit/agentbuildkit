@@ -7,9 +7,9 @@ import pytest
 from agent_framework import ChatResponse, Content, Message, SecretString
 from pydantic import BaseModel
 
-from agent_platform.agents import AgentDefinition, create_agent
-from agent_platform.guardrails import ApprovalDecision, ToolEffect, prepare_tool
-from agent_platform.integrations import (
+from agentbuildkit.agents import AgentDefinition, create_agent
+from agentbuildkit.guardrails import ApprovalDecision, ToolEffect, prepare_tool
+from agentbuildkit.integrations import (
     HttpApprovalRequired,
     HttpClient,
     HttpPathError,
@@ -18,9 +18,9 @@ from agent_platform.integrations import (
     HttpStatusError,
     HttpTimeoutError,
 )
-from agent_platform.observability import AuditLog
-from agent_platform.testing import ScriptedChatClient
-from agent_platform.workflows import envelope, run_workflow, sequential_workflow
+from agentbuildkit.observability import AuditLog
+from agentbuildkit.testing import ScriptedChatClient
+from agentbuildkit.workflows import envelope, run_workflow, sequential_workflow
 
 SECRET = "sk-live-http-secret"
 
@@ -299,6 +299,8 @@ async def test_correlation_survives_from_workflow_to_http_audit() -> None:
             instructions="Use the lookup tool and return the state.",
             input_type=Draft,
             output_type=Status,
+            provider="openai",
+            model="offline-model",
             tools=(prepare_tool(lookup_status, effect=ToolEffect.READ),),
         ),
         client=ScriptedChatClient(
@@ -329,6 +331,8 @@ async def test_correlation_survives_from_workflow_to_http_audit() -> None:
             instructions="Repeat the status.",
             input_type=Status,
             output_type=Status,
+            provider="openai",
+            model="offline-model",
         ),
         client=ScriptedChatClient(['{"state": "open"}']),
         audit_log=audit_log,

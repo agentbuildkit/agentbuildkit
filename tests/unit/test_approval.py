@@ -5,14 +5,14 @@ import json
 import pytest
 from agent_framework import Content, FunctionTool, SecretString, tool
 
-from agent_platform.guardrails import (
+from agentbuildkit.guardrails import (
     ApprovalDecision,
     ToolEffect,
     ToolPolicyError,
     execute_tool,
     prepare_tool,
 )
-from agent_platform.observability import AuditLog, argument_hash
+from agentbuildkit.observability import AuditLog, argument_hash
 
 
 def _read_tool() -> FunctionTool:

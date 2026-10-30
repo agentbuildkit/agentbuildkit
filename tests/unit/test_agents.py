@@ -7,16 +7,17 @@ import pytest
 from agent_framework import ChatResponse, Content, FunctionTool, Message, tool
 from pydantic import BaseModel
 
-from agent_platform.agents import (
+from agentbuildkit.agents import (
     AgentApprovalRequired,
     AgentDefinition,
     AgentOutputError,
     PlatformAgent,
     create_agent,
 )
-from agent_platform.guardrails import ToolEffect, ToolPolicyError, prepare_tool
-from agent_platform.observability import AuditLog
-from agent_platform.testing import ScriptedChatClient
+from agentbuildkit.evaluation import trace_from_audit
+from agentbuildkit.guardrails import ToolEffect, ToolPolicyError, prepare_tool
+from agentbuildkit.observability import AuditLog
+from agentbuildkit.testing import ScriptedChatClient
 
 SECRET = "sk-live-agent-secret"
 
@@ -44,8 +45,9 @@ def _definition(
         instructions=instructions,
         input_type=Task,
         output_type=Report,
-        tools=tools,
+        provider="openai",
         model="offline-model",
+        tools=tools,
     )
 
 
@@ -313,6 +315,85 @@ async def test_prepared_tool_outside_the_definition_does_not_run() -> None:
     assert calls == []
     assert isinstance(response.value, Report)
     assert SECRET not in audit_log_text(agent.audit_log)
+
+
+async def test_unassigned_tool_rejection_is_observed_from_the_audit() -> None:
+    executed: list[str] = []
+
+    def read_service(reference: str) -> str:
+        """Read a service record."""
+        executed.append(reference)
+        return "open"
+
+    foreign = prepare_tool(read_service, effect=ToolEffect.READ, name="read_service")
+    assert foreign.name == "read_service"
+    script = ChatResponse(
+        messages=[
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call-foreign",
+                        name="read_service",
+                        arguments={"reference": "A-100"},
+                    )
+                ],
+            )
+        ],
+        response_id="scripted",
+    )
+    audit_log = AuditLog()
+    client = ScriptedChatClient([script, _report("contained", 1)])
+    agent = _agent(client, _read_tool(), audit_log=audit_log)
+
+    result = await agent.run(Task(task="read the service record"), correlation_id="corr-foreign")
+
+    assert result.summary == "contained"
+    assert executed == []
+    rejected = [event for event in audit_log.events if event.tool_name == "read_service"]
+    assert len(rejected) == 1
+    assert rejected[0].approval == "rejected"
+    assert rejected[0].outcome == "failed"
+    assert rejected[0].correlation_id == "corr-foreign"
+    observation = trace_from_audit(audit_log, correlation_id="corr-foreign")
+    assert observation.tools_rejected == ("read_service",)
+    assert "read_service" not in observation.tools_called
+
+
+async def test_assigned_tool_call_is_not_recorded_as_rejected() -> None:
+    calls: list[str] = []
+
+    def lookup_status(reference: str) -> str:
+        """Return a stored status."""
+        calls.append(reference)
+        return f"status:{reference}"
+
+    assigned = prepare_tool(lookup_status, effect=ToolEffect.READ, name="lookup_status")
+    script = ChatResponse(
+        messages=[
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call-assigned",
+                        name="lookup_status",
+                        arguments={"reference": "A-100"},
+                    )
+                ],
+            )
+        ],
+        response_id="scripted",
+    )
+    audit_log = AuditLog()
+    client = ScriptedChatClient([script, _report("read", 1)])
+    agent = _agent(client, assigned, audit_log=audit_log)
+
+    await agent.run(Task(task="read the assigned record"), correlation_id="corr-assigned")
+
+    assert calls == ["A-100"]
+    observation = trace_from_audit(audit_log, correlation_id="corr-assigned")
+    assert observation.tools_rejected == ()
+    assert "lookup_status" in observation.tools_called
 
 
 def audit_log_text(audit_log: AuditLog) -> str:

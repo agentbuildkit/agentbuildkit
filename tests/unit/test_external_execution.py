@@ -11,8 +11,8 @@ import pytest
 from agent_framework import SecretString
 from pydantic import BaseModel
 
-from agent_platform.config import load_cursor_settings, redacted_settings
-from agent_platform.external_execution import (
+from agentbuildkit.config import load_cursor_settings, redacted_settings
+from agentbuildkit.external_execution import (
     TOOL_DELEGATE_IMPLEMENTATION,
     TOOL_FOLLOW_UP_IMPLEMENTATION,
     ExecutionConflict,
@@ -29,8 +29,8 @@ from agent_platform.external_execution import (
     register_execution_tool_permissions,
     render_assignment,
 )
-from agent_platform.guardrails import RepeatedGrantUse, ToolEffect, prepare_tool
-from agent_platform.integrations import (
+from agentbuildkit.guardrails import RepeatedGrantUse, ToolEffect, prepare_tool
+from agentbuildkit.integrations import (
     CURSOR_API_BASE_URL,
     CursorCredentials,
     CursorExecutionProvider,
@@ -38,9 +38,9 @@ from agent_platform.integrations import (
     cursor_header_provider,
     cursor_http_client,
 )
-from agent_platform.observability import AuditLog, argument_hash
-from agent_platform.state.models import RegistryRejected
-from agent_platform.workflows import (
+from agentbuildkit.observability import AuditLog, argument_hash
+from agentbuildkit.state.models import RegistryRejected
+from agentbuildkit.workflows import (
     PendingHumanInput,
     WorkflowStateStore,
     approval_workflow,
@@ -819,7 +819,7 @@ def _signal(store: WorkflowStateStore, name: str):
 
 
 def _assignment():
-    from agent_platform.external_execution import ImplementationAssignment
+    from agentbuildkit.external_execution import ImplementationAssignment
 
     return ImplementationAssignment(
         work_item_id="work-1",

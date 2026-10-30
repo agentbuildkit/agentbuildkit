@@ -1,4 +1,4 @@
-"""Offline tests for the reference customer-service organisation."""
+"""Offline tests for the customer-service example."""
 
 import json
 from pathlib import Path
@@ -6,10 +6,9 @@ from pathlib import Path
 from agent_framework import SecretString
 from agent_framework.openai import OpenAIChatClient
 
-from agent_platform.config import load_openai_settings
-from agent_platform.observability import AuditLog
-from agent_platform.workflows import memory_workflow_store, sqlite_workflow_store
-from organisation import (
+from agentbuildkit.observability import AuditLog
+from agentbuildkit.workflows import memory_workflow_store, sqlite_workflow_store
+from customer_service import (
     LOCAL_MOCK_TOKEN,
     ORGANISATION_SCOPE,
     CustomerRequest,
@@ -19,8 +18,13 @@ from organisation import (
     resume_service_action,
     run_organisation_evaluation,
 )
-from organisation.evaluation import RAW_MODEL_OUTPUT, scripted_clients
-from organisation.team import SAM, TAYLOR
+from customer_service.evaluation import (
+    RAW_MODEL_OUTPUT,
+    execute_case,
+    organisation_cases,
+    scripted_clients,
+)
+from customer_service.team import SAM, TAYLOR
 
 
 def _silent(**_kwargs: object) -> None:
@@ -40,6 +44,25 @@ async def test_organisation_evaluation_suite() -> None:
     assert "billing-routes-to-sam" in names
     assert "approved-service-action-executes-once" in names
     assert "correlation-survives-the-organisation" in names
+
+
+async def test_foreign_tool_rejection_matches_the_audit_trace() -> None:
+    case = next(
+        item for item in organisation_cases() if item.name == "specialist-cannot-use-other-tools"
+    )
+    observation = await execute_case(case)
+    events = json.loads(observation.captured_text)
+    audited = tuple(
+        event["tool_name"]
+        for event in events
+        if event["kind"] == "tool"
+        and event["outcome"] == "failed"
+        and event["approval"] == "rejected"
+        and event["argument_hash"] != "agent-run"
+    )
+
+    assert audited == ("read_service",)
+    assert observation.tools_rejected == audited
 
 
 async def test_informational_request_completes_without_approval() -> None:
@@ -171,14 +194,14 @@ async def test_specialists_receive_only_their_own_tools() -> None:
 
 def test_production_clients_use_the_openai_adapter(tmp_path: Path) -> None:
     env_file = tmp_path / "openai.env"
-    env_file.write_text("", encoding="utf-8")
-    settings = load_openai_settings(
-        api_key="local-test-key",
-        chat_model="local-test-model",
-        env_file_path=str(env_file),
+    env_file.write_text(
+        "OPENAI_API_KEY=local-test-key\nOPENAI_CHAT_MODEL=gpt-test-local\n",
+        encoding="utf-8",
     )
-    clients = production_clients(settings)
+    clients = production_clients(env_file_path=str(env_file))
 
     assert set(clients) == {"alex", "sam", "taylor", "jordan"}
-    assert all(isinstance(client, OpenAIChatClient) for client in clients.values())
-    assert len({id(client) for client in clients.values()}) == 1
+    assert len({id(client) for client in clients.values()}) == 4
+    for client in clients.values():
+        assert isinstance(client, OpenAIChatClient)
+        assert client.model == "gpt-4.1-mini"
