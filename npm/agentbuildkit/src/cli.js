@@ -19,6 +19,7 @@ function parseArgs(argv, env = process.env) {
     noDemo: false,
     verbose: false,
     upgrade: false,
+    installMissingUv: false,
     source: env.AGENTBUILDKIT_SOURCE || "package",
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -31,6 +32,8 @@ function parseArgs(argv, env = process.env) {
       options.verbose = true;
     } else if (arg === "--upgrade") {
       options.upgrade = true;
+    } else if (arg === "--install-uv") {
+      options.installMissingUv = true;
     } else if (arg === "--source") {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) {
@@ -60,7 +63,8 @@ function helpText() {
     "Options:",
     "  --help       Show this help",
     "  --no-demo    Do not run agentkit demo",
-    "  --upgrade    Reinstall from the selected source",
+    "  --upgrade     Reinstall from the selected source",
+    "  --install-uv Allow Astral's uv installer when uv is missing",
     "  --source     package (default), local, or a repository path",
     "  --verbose    Show error details",
     "",
@@ -96,6 +100,11 @@ async function bootstrap(options) {
     find: options.findExecutable,
     install: options.installUv,
     log,
+    ask: options.ask,
+    input: options.input,
+    output: options.output,
+    interactive: options.interactive,
+    installMissingUv: options.installMissingUv,
   });
   log(uv.installed ? "✓ uv installed" : "✓ uv available");
 

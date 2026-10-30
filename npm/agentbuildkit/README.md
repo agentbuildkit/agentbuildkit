@@ -28,6 +28,8 @@ The default source is the Python package name `agentbuildkit` (`uv tool install 
 
 `--upgrade` reinstalls from the selected source. A second run without `--upgrade` leaves an existing installation in place.
 
+If `uv` is missing, an interactive terminal asks before running Astral's installer. A non-interactive run does not download uv unless you pass `--install-uv`.
+
 ## After installation
 
 Skip the demo:
@@ -56,4 +58,4 @@ Remove the tool:
 uv tool uninstall agentbuildkit
 ```
 
-The AgentBuildKit repository does not currently include a license file, so this package does not declare one.
+Licensed under the Apache License 2.0. See the repository `LICENSE` file.

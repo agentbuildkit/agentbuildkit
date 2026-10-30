@@ -4,6 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 
 const { bootstrap, DEMO_PROMPT } = require("../src/cli");
+const { UV_INSTALL_PROMPT } = require("../src/uv");
 const { BootstrapError } = require("../src/errors");
 const { askYesNo } = require("../src/prompt");
 const { installArguments, resolveSource } = require("../src/source");
@@ -58,6 +59,7 @@ test("uv that is already installed is reused", async () => {
 test("missing uv is installed before AgentBuildKit", async () => {
   let seen = false;
   const harness = createHarness({
+    installMissingUv: true,
     find(name) {
       if (name === "uv") {
         return seen ? "/home/dev/.local/bin/uv" : null;
@@ -79,6 +81,7 @@ test("missing uv is installed before AgentBuildKit", async () => {
 
 test("uv installation failure stops before AgentBuildKit is installed", async () => {
   const harness = createHarness({
+    installMissingUv: true,
     find() {
       return null;
     },
@@ -87,6 +90,75 @@ test("uv installation failure stops before AgentBuildKit is installed", async ()
     },
   });
   await assert.rejects(harness.run(), /uv could not be installed/);
+  assert.equal(harness.calls.length, 0);
+});
+
+test("an interactive yes installs missing uv", async () => {
+  let seen = false;
+  let prompt = "";
+  const harness = createHarness({
+    noDemo: true,
+    interactive: true,
+    find(name) {
+      if (name === "uv") {
+        return seen ? "/home/dev/.local/bin/uv" : null;
+      }
+      return null;
+    },
+    async installUv() {
+      seen = true;
+      return { code: 0, stdout: "", stderr: "" };
+    },
+    ask(value) {
+      prompt = value;
+      return true;
+    },
+  });
+  const code = await harness.run();
+  assert.equal(code, 0);
+  assert.equal(seen, true);
+  assert.equal(prompt, UV_INSTALL_PROMPT);
+  assert.equal(harness.lines.includes("uv is required but isn't installed."), true);
+  assert.equal(
+    harness.lines.includes("AgentBuildKit can install uv using Astral's official installer."),
+    true,
+  );
+});
+
+test("an interactive no does not install uv", async () => {
+  let called = false;
+  const harness = createHarness({
+    interactive: true,
+    find() {
+      return null;
+    },
+    async installUv() {
+      called = true;
+      return { code: 0, stdout: "", stderr: "" };
+    },
+    ask() {
+      return false;
+    },
+  });
+  await assert.rejects(harness.run(), /uv was not installed/);
+  assert.equal(called, false);
+  assert.equal(harness.calls.length, 0);
+});
+
+test("a non-interactive run does not install uv without --install-uv", async () => {
+  let called = false;
+  const harness = createHarness({
+    interactive: false,
+    find() {
+      return null;
+    },
+    async installUv() {
+      called = true;
+      return { code: 0, stdout: "", stderr: "" };
+    },
+  });
+  await assert.rejects(harness.run(), /--install-uv/);
+  assert.equal(called, false);
   assert.equal(harness.calls.length, 0);
 });
 
@@ -190,7 +262,7 @@ test("a second run does not install AgentBuildKit again", async () => {
   harness.lines.length = 0;
   harness.responses.length = 0;
   harness.responses.push(
-    { code: 0, stdout: "agentbuildkit v0.1.0.dev0\n- agentkit\n", stderr: "" },
+    { code: 0, stdout: "agentbuildkit v0.1.0\n- agentkit\n", stderr: "" },
     { code: 0, stdout: `${binDir}\n`, stderr: "" },
     { code: 0, stdout: "AgentBuildKit Doctor\nStatus: ready for offline demo\n", stderr: "" },
   );
@@ -265,6 +337,7 @@ function createHarness(overrides = {}) {
         scriptDir: repository,
         noDemo: overrides.noDemo === true,
         upgrade: false,
+        installMissingUv: overrides.installMissingUv === true,
         interactive: overrides.interactive === true,
         readFile: () => 'name = "agentbuildkit"\n',
         exists: (file) => file === pathJoin(repository, "pyproject.toml"),

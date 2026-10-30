@@ -5,6 +5,8 @@ const { spawn } = require("node:child_process");
 const { BootstrapError } = require("./errors");
 
 const UV_INSTALL_URL = "https://astral.sh/uv/install.sh";
+const UV_INSTALL_PROMPT = "Install uv now? [Y/n] ";
+const UV_DOCS_URL = "https://docs.astral.sh/uv/getting-started/installation/";
 
 function installUv(spawnImpl = spawn) {
   return new Promise((resolve) => {
@@ -43,12 +45,36 @@ function installUv(spawnImpl = spawn) {
   });
 }
 
-async function ensureUv({ find, install, log }) {
+async function ensureUv({
+  find,
+  install,
+  log,
+  ask,
+  input,
+  output,
+  interactive = false,
+  installMissingUv = false,
+}) {
   const existing = find("uv");
   if (existing) {
     return { command: existing, installed: false };
   }
-  log("uv was not found.");
+  if (!installMissingUv && !interactive) {
+    throw new BootstrapError(
+      `uv is required but isn't installed. Install it from ${UV_DOCS_URL}, or rerun with --install-uv.`,
+    );
+  }
+  log("uv is required but isn't installed.");
+  log("");
+  log("AgentBuildKit can install uv using Astral's official installer.");
+  if (!installMissingUv) {
+    const accepted = await ask(UV_INSTALL_PROMPT, { input, output, interactive: true });
+    if (!accepted) {
+      throw new BootstrapError(
+        `uv was not installed. AgentBuildKit needs uv. Install it from ${UV_DOCS_URL}, then run this command again.`,
+      );
+    }
+  }
   log(`Installing uv from ${UV_INSTALL_URL}`);
   log("This downloads uv into your home directory. It does not use sudo or change system Python.");
   const result = await install();
@@ -66,4 +92,4 @@ async function ensureUv({ find, install, log }) {
   return { command: installed, installed: true };
 }
 
-module.exports = { UV_INSTALL_URL, ensureUv, installUv };
+module.exports = { UV_DOCS_URL, UV_INSTALL_PROMPT, UV_INSTALL_URL, ensureUv, installUv };

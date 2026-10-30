@@ -15,6 +15,7 @@ test("package reserves the agentbuildkit command", () => {
   assert.equal(pkg.bin.agentbuildkit, "bin/agentbuildkit.js");
   assert.deepEqual(pkg.files, ["bin/agentbuildkit.js", "src"]);
   assert.equal(pkg.engines.node, ">=18");
+  assert.equal(pkg.license, "Apache-2.0");
 });
 
 test("help is local and does not print secrets", () => {
@@ -35,6 +36,7 @@ test("help is local and does not print secrets", () => {
   assert.match(result.stdout, /npx agentbuildkit/);
   assert.match(result.stdout, /--no-demo/);
   assert.match(result.stdout, /--source/);
+  assert.match(result.stdout, /--install-uv/);
   assert.match(result.stdout, /uv tool uninstall agentbuildkit/);
   assert.equal(result.stdout.includes(secret), false);
 });

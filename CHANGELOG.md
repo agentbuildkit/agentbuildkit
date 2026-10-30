@@ -1,19 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.1.0
 
-- OpenAI and Anthropic are built-in providers. Each agent declares its own provider and model, and one workflow can mix both. Tests can still inject a scripted client. An agent run records the provider and model ids, not credentials.
-- The reusable package is `agentbuildkit` at `0.1.0.dev0`. The customer-service team is the example in `examples/customer_service`, and its business system is fixture data.
-- Platform state version 2 stores a durable audit ledger, workflow runs, an organisation directory, and work items in the existing SQLite workflow file.
-- A parent workflow can start a catalogued child only when an explicit delegation allows it. Short child graphs run through `WorkflowExecutor`. A parent can pause on a checkpoint until a typed child outcome arrives as a signal.
-- Named gates issue bounded grants. `execute_tool` checks the stored grant before a governed side effect. Implementation, merge, and release stay separate permission classes. Grant use is ledgered, and a grant ends when it expires or the work item leaves the authorised state.
-- Version 1 files remain readable for checkpoints and approvals. Runs, the ledger, and the directory stay unavailable until an explicit migration. Unknown versions are rejected. Opening an existing version 2 file adds the delegation, signal, gate, and grant tables without rewriting checkpoint payloads.
-- GitHub repository binding uses the directory allowlist, bounded grants, and `execute_tool`. Implementation, merge, and release stay separate. The platform stores GitHub identifiers and content hashes, and publishes those outcomes as signals. GitHub App credentials stay on the authorization header.
-- External engineering execution can delegate one implementation grant to a provider. Cursor Cloud Agents is the first provider. The platform stores the agent and run ids, then pauses. Completion and failure resume the run as signals. Cursor credentials stay on the authorization header. Pull requests, merges, and releases stay on the GitHub grants.
+Initial public release. This version is prepared for publication. It has not been published to PyPI or npm.
+
+- Python package `agentbuildkit` 0.1.0 and command `agentkit`.
+- Per-agent OpenAI and Anthropic provider and model selection. One workflow can mix both. A scripted client remains available for tests and the offline demo.
+- Typed agent inputs and outputs.
+- Deterministic routing, per-agent tool allowlists, and read versus side-effect classification.
+- Human approval before a side effect, SQLite pause and resume, at-most-once side-effect execution, and persisted rejections.
+- Audit events that record the provider and model and omit credentials, plus an offline evaluation runner.
+- Governed GitHub repository operations and one external-execution grant for Cursor. Credentials stay on the authorization header.
+- `agentkit demo`, an offline run of that harness. It needs no API key.
+- Node bootstrapper `agentbuildkit` 0.0.1. `npx agentbuildkit` installs the Python CLI with uv into an isolated tool environment. Installing uv requires a prompt, or `--install-uv` when the terminal is not interactive.
+- Apache License 2.0.
 
 ## 1.0.0
 
-First reusable release of the agent organisation template.
+Earlier reusable release of the agent organisation template, before this product name.
 
 - Typed agent boundaries, with Pydantic inputs and outputs.
 - Deterministic orchestration for routing, review, and aggregation.
