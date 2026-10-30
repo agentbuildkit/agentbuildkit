@@ -7,9 +7,9 @@ alwaysApply: true
 
 Microsoft Agent Framework 1.x is the agent framework for this repository.
 
-- Build agents with `agent_framework.Agent` and `OpenAIChatClient` from `agent_framework.openai`.
+- Build agents with `agent_framework.Agent`. Each agent declares its provider and model. Inject the chat client. The OpenAI provider constructs `OpenAIChatClient`. The Anthropic provider constructs `AnthropicClient`.
 - Compose explicit flows with `WorkflowBuilder`. Use `SequentialBuilder`, `ConcurrentBuilder`, `HandoffBuilder`, `GroupChatBuilder`, or `MagenticBuilder` when one of those patterns matches the task.
-- Put reusable code in `src/agent_platform`. Put client-specific agents in `src/organisation`.
+- Put reusable harness code in `src/agentbuildkit`. Put the customer-service demonstration in `examples/customer_service`.
 - Use a Pydantic model for agent and workflow inputs and outputs.
 - Use ordinary Python for routing, validation, and aggregation when the step does not need model judgment.
 

@@ -9,10 +9,10 @@ import pytest
 from agent_framework import FunctionTool
 from pydantic import BaseModel
 
-from agent_platform.guardrails import ToolEffect, prepare_tool
-from agent_platform.observability import AuditEvent, AuditLog, argument_hash
-from agent_platform.state.registry import V2_TABLES
-from agent_platform.workflows import (
+from agentbuildkit.guardrails import ToolEffect, prepare_tool
+from agentbuildkit.observability import AuditEvent, AuditLog, argument_hash
+from agentbuildkit.state.registry import V2_TABLES
+from agentbuildkit.workflows import (
     PLATFORM_STATE_VERSION,
     SUPPORTED_PLATFORM_STATE_VERSIONS,
     CheckpointCompatibilityError,
@@ -334,6 +334,107 @@ async def test_paused_run_points_at_one_checkpoint(store: WorkflowStateStore) ->
     store.transition_run(run.run_id, "completed")
     with pytest.raises(RegistryRejected):
         await store.bind_checkpoint(run.run_id, paused.pending.checkpoint_id)
+
+
+def test_ledger_identity_columns_upgrade_old_version_2_files(tmp_path: Path) -> None:
+    path = tmp_path / "state.sqlite"
+    _write_current_v2(path)
+    fresh_columns = _ledger_columns(path)
+    assert fresh_columns.count("provider") == 1
+    assert fresh_columns.count("model") == 1
+
+    _replace_ledger_with_legacy_table(path)
+    assert "provider" not in _ledger_columns(path)
+    assert "model" not in _ledger_columns(path)
+
+    upgraded = sqlite_workflow_store(path, "org-a")
+    assert upgraded.platform_version == PLATFORM_STATE_VERSION
+    upgraded_columns = _ledger_columns(path)
+    assert upgraded_columns.count("provider") == 1
+    assert upgraded_columns.count("model") == 1
+    old = upgraded.list_ledger()
+    assert len(old) == 1
+    assert old[0].event_id == "event-old"
+    assert old[0].agent_name == "alex"
+    assert old[0].provider is None
+    assert old[0].model is None
+
+    secret = "sk-ledger-secret"
+    upgraded.append_ledger(
+        AuditEvent(
+            correlation_id="corr-new",
+            agent_name="jordan",
+            tool_name="review",
+            approval="not_required",
+            outcome="completed",
+            argument_hash=argument_hash({"api_key": secret}),
+            provider="anthropic",
+            model="anthropic-model-b",
+        ),
+        event_id="event-new",
+    )
+    rendered = _stored_text(path)
+    assert secret not in rendered
+    assert "anthropic-model-b" in rendered
+
+    reopened = sqlite_workflow_store(path, "org-a")
+    opened_again = sqlite_workflow_store(path, "org-a")
+    assert reopened.platform_version == PLATFORM_STATE_VERSION
+    assert opened_again.platform_version == PLATFORM_STATE_VERSION
+    assert _ledger_columns(path).count("provider") == 1
+    assert _ledger_columns(path).count("model") == 1
+    rows = {row.event_id: row for row in opened_again.list_ledger()}
+    assert rows["event-old"].provider is None
+    assert rows["event-old"].model is None
+    assert rows["event-new"].agent_name == "jordan"
+    assert rows["event-new"].provider == "anthropic"
+    assert rows["event-new"].model == "anthropic-model-b"
+    assert secret not in rows["event-new"].model_dump_json()
+
+
+def _write_current_v2(path: Path) -> None:
+    store = sqlite_workflow_store(path, "org-a")
+    assert store.platform_version == PLATFORM_STATE_VERSION
+
+
+def _ledger_columns(path: Path) -> list[str]:
+    connection = sqlite3.connect(path)
+    names = [str(row[1]) for row in connection.execute("PRAGMA table_info(ledger)")]
+    connection.close()
+    return names
+
+
+def _replace_ledger_with_legacy_table(path: Path) -> None:
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE ledger_legacy (
+            scope TEXT NOT NULL,
+            event_id TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            correlation_id TEXT NOT NULL,
+            run_id TEXT,
+            agent_name TEXT,
+            tool_name TEXT NOT NULL,
+            approval TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            argument_hash TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            PRIMARY KEY (scope, event_id)
+        );
+        INSERT INTO ledger_legacy (
+            scope, event_id, recorded_at, correlation_id, run_id, agent_name,
+            tool_name, approval, outcome, argument_hash, kind
+        ) VALUES (
+            'org-a', 'event-old', '2026-01-01T00:00:00+00:00', 'corr-old', NULL,
+            'alex', 'read_account', 'not_required', 'completed', 'hash-old', 'tool'
+        );
+        DROP TABLE ledger;
+        ALTER TABLE ledger_legacy RENAME TO ledger;
+        """
+    )
+    connection.commit()
+    connection.close()
 
 
 def test_sqlite_ledger_and_runs_survive_reopen(tmp_path: Path) -> None:

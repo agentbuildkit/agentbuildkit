@@ -26,6 +26,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     APP_STATE_DIRECTORY=/data \
+    PYTHONPATH=/app/examples \
     PATH="/app/.venv/bin:$PATH"
 
 RUN groupadd --gid 10001 app \
@@ -34,12 +35,13 @@ RUN groupadd --gid 10001 app \
     && chown app:app /data
 
 COPY --from=build --chown=app:app /app/.venv /app/.venv
+COPY --chown=app:app examples ./examples
 
 USER app
 
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD ["python", "-m", "organisation.health"]
+    CMD ["python", "-m", "customer_service.health"]
 
-ENTRYPOINT ["python", "-m", "organisation"]
+ENTRYPOINT ["python", "-m", "customer_service"]

@@ -1,4 +1,3 @@
 # Evaluation tests
 
-The reusable runner lives in `agent_platform.evaluation` and is covered by `tests/unit/test_evaluation.py`.
-Organisation-specific datasets belong with the client, not in this package. Suite runs stay offline.
+The reusable runner lives in `agentbuildkit.evaluation` and is covered by `tests/unit/test_evaluation.py`. The customer-service cases live with the example. Suite runs stay offline.

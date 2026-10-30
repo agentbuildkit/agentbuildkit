@@ -4,9 +4,9 @@ from typing import Any
 
 import pytest
 
-from agent_platform.config import AppSettings
-from agent_platform.observability import configure_observability
-from agent_platform.runtime import build_runtime
+from agentbuildkit.config import AppSettings
+from agentbuildkit.observability import configure_observability
+from agentbuildkit.runtime import build_runtime
 
 
 def test_observability_defaults_keep_sensitive_data_off() -> None:

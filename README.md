@@ -1,71 +1,123 @@
-# Agent Framework Starter
+# AgentBuildKit
 
-Private template for building a client AI organisation on Microsoft Agent Framework 1.x. The current release is [1.0.0](CHANGELOG.md).
+**Build agents. Not demos.**
 
-A consulting engagement copies this repository, keeps the shared platform, and replaces the sample organisation with that client's agents, tools, and workflows. The platform handles typed agent runs, allowlisted tools, human approval, SQLite pause state, HTTP and MCP allowlists, audit, correlation, and offline evaluation. The client package decides what the organisation is allowed to do.
+AgentBuildKit is the production layer around your agent framework.
 
-## Architecture
+A model alone is not an agent. AgentBuildKit is the harness that turns a model into something you can route, constrain, approve, audit, and evaluate.
 
-`src/agent_platform` is reusable platform IP. `src/organisation` is the replaceable client implementation. Agents return typed Pydantic models. Python routes, validates, and decides when a side effect may run. The model does not choose credentials, URLs, or whether a write is permitted.
+**Model + Harness = Agent**
 
-The diagram and the rules for tools, approval, persistence, and evaluation are in [ARCHITECTURE.md](ARCHITECTURE.md).
+It currently builds on Microsoft Agent Framework. Each agent declares its own provider and model. OpenAI and Anthropic are the built-in providers, and one workflow can mix them. Deterministic Python owns routing, tool permission, and whether a side effect may run.
 
-Platform state version 2 adds a durable audit ledger, a run registry, and an organisation directory with work items to the same SQLite file. The same version now also stores workflow delegations, child-run outcomes, named gates, and bounded grants. GitHub operations bind an allowlisted repository and run through those grants. An implementation grant can delegate the authorised branch to an external execution provider such as Cursor; the platform records the binding and resumes when a signal arrives. Version 1 files still open for approval checkpoints. Ledger, run, and directory calls fail closed until `migrate_platform_state()` runs. The reference organisation does not require that migration and still uses its anonymous approval decision.
+## What it adds
+
+- **Models.** Per-agent provider and model selection.
+- **Agents.** Typed inputs and outputs.
+- **Tools.** An allowlist on each agent. Reads can run. Side effects wait.
+- **Workflows.** Deterministic routing across agents.
+- **Guardrails and human approval.** A side effect pauses until a person decides.
+- **State and audit.** SQLite pause and resume, idempotent side effects, and an audit trail that records the provider and model.
+- **Evaluation.** The same run can be checked against expectations.
 
 ## Quick start
 
-Requires Python 3.12 and [uv](https://docs.astral.sh/uv/) 0.12 or newer.
+### Public install
 
 ```bash
-uv python install 3.12
-uv sync --locked
-cp .env.example .env
-uv run python -m organisation
+npx agentbuildkit
 ```
 
-Put `OPENAI_API_KEY` in `.env` only when you run a live model. Leave the file uncommitted. `OPENAI_CHAT_MODEL` selects the model. An empty value uses `gpt-4.1-mini` for the reference command.
+**Available after the first npm and PyPI release.** Neither package has been published yet.
 
-Microsoft Foundry is an optional extra and is not installed by a normal sync:
+After that release, the command installs the Python CLI with [uv](https://docs.astral.sh/uv/) and then runs `agentkit doctor`. In an interactive terminal it offers the offline demo.
+
+### Development install
+
+From a clone of this repository, before either package is published:
 
 ```bash
-uv sync --locked --extra foundry
+node npm/agentbuildkit/bin/agentbuildkit.js --source local
 ```
 
-## Reference organisation
+That installs this checkout into an isolated uv tool environment. `--upgrade` reinstalls it. `--no-demo` skips the demo prompt. If `uv` is missing, an interactive terminal asks before running Astral's installer. A non-interactive run installs uv only when you pass `--install-uv`.
 
-`src/organisation` contains a fictional B2B customer-service team: Alex classifies, Sam reads accounts, Taylor reads services, and Jordan reviews the draft. A service change pauses for a person. The business system is an in-process mock with one customer, `A-100`. This package is the working example. Replace it for a client deployment. Details are in [src/organisation/README.md](src/organisation/README.md).
-
-## Docker
-
-The image installs the locked dependencies, runs as uid 10001, and does not contain `.env`. Approval state is SQLite on `/data`.
+To work on the Python package directly:
 
 ```bash
-docker build -t agent-platform:local .
-docker run --rm --entrypoint python agent-platform:local -m organisation.health
-mkdir -p .data
-docker run --rm -it \
-  --env-file .env \
-  -e APP_STATE_DIRECTORY=/data \
-  -v "$PWD/.data:/data" \
-  agent-platform:local
+uv sync
+uv run agentkit demo
 ```
 
-The health check imports the application and confirms the data directory is writable. It does not call OpenAI.
+Python 3.12 is required. uv manages that interpreter. The bootstrapper does not change the system Python.
 
-## Create a new organisation
+### Commands
 
-1. Copy this repository for the client.
-2. Complete [CLIENT_DISCOVERY.md](CLIENT_DISCOVERY.md) with the business.
-3. Turn that into [ORGANISATION_SPEC.md](ORGANISATION_SPEC.md).
-4. Follow [CREATE_NEW_ORGANISATION.md](CREATE_NEW_ORGANISATION.md).
-5. In Cursor, use [NEW_ORGANISATION_PROMPT.md](NEW_ORGANISATION_PROMPT.md). The prompt keeps changes inside `src/organisation` unless a platform gap is accepted first.
-6. Walk [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) before the client uses it.
+```bash
+agentkit version
+agentkit doctor
+agentkit demo
+```
 
-## Security and governance
+`agentkit doctor` checks the installation. Missing OpenAI or Anthropic credentials are reported and are not a failure.
 
-Secrets stay in the environment. Side effects use an allowlisted tool and wait for a person. HTTP and MCP targets come from configuration, and credentials are supplied by a header provider or client settings. Audit records and checkpoints store hashes and identifiers. They omit prompts, raw model responses, raw tool arguments, and credentials. Unknown routes fail closed. A repeated approval does not run the side effect again.
+`agentkit demo` is offline. It needs no API key and it does not call a model provider. It shows the harness: an agent routes the request, a specialist reads an allowed tool, an unauthorised tool is rejected, a side effect pauses for approval, the run resumes after that decision, a reviewer checks the result, and the evaluation passes or fails from the audit trail.
 
-## Testing and evaluation
+`agentkit demo --approve` and `agentkit demo --reject` make that decision without a prompt.
+
+## Architecture
+
+```text
+Model
+  ↓
+Agent                 provider and model belong to that agent
+  ↓
+Tools                 allowlist; reads run, side effects wait
+  ↓
+Workflow              deterministic routing
+  ↓
+Guardrails / approval human decision before a side effect
+  ↓
+State / audit         SQLite pause, resume, and audit events
+  ↓
+Evaluation            expectations checked against the trace
+```
+
+A workflow can mix providers:
+
+```text
+alex    → OpenAI / one model
+taylor  → OpenAI / another model
+jordan  → Anthropic / another model
+```
+
+The names above are the offline demo's agents. The provider and model are fields on each agent definition. The workflow that receives the clients does not branch on the provider. The offline demo uses scripted clients, so those calls are not OpenAI or Anthropic requests.
+
+## The offline demo
+
+The demo is a loading-bay request: book a technician for tomorrow.
+
+1. Alex, the orchestrator, chooses the `service` route.
+2. Taylor, the service specialist, calls `read_ticket`. That read is allowed.
+3. `cancel_ticket` is not on Taylor's allowlist, so it is rejected.
+4. `schedule_visit` is a side effect. The run pauses and stores the approval in SQLite.
+5. A person approves or rejects it. Approval runs the visit once. Rejection does not.
+6. Jordan reviews the outcome.
+7. The evaluation checks the trace, including the route, the rejected tool, the approval, and the audit record.
+
+That is the production harness running locally, with the model text supplied by a script.
+
+## Current scope
+
+This release includes the Python package `agentbuildkit`, the `agentkit` command, and the Node bootstrapper in `npm/agentbuildkit`. Microsoft Foundry is an optional extra and is not installed by a normal sync.
+
+Skills, persistent agent memory, a dashboard, and Agent Bundles are not in this release.
+
+`examples/customer_service` is a separate example with fixture data. It is not the offline demo and it is not part of the installed package.
+
+Further detail is in [docs/architecture.md](docs/architecture.md).
+
+## Development checks
 
 ```bash
 uv run ruff check .
@@ -74,14 +126,12 @@ uv run pyright
 uv run pytest
 ```
 
-The default suite runs offline. Organisation cases live with the client package and use a scripted chat client. A live model run is a separate smoke test performed by a person.
+Bootstrapper tests, from `npm/agentbuildkit`:
 
-## Layout
+```bash
+npm test
+```
 
-| Path | Purpose |
-| --- | --- |
-| `src/agent_platform` | Reusable platform |
-| `src/organisation` | Client organisation, currently the reference example |
-| `tests/unit` | Offline tests |
-| `tests/integration` | Live-service tests, marked and kept out of the default run |
-| `AGENTS.md` | Rules for engineers and Cursor agents working in this repository |
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).

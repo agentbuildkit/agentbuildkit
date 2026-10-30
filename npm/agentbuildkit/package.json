@@ -1,0 +1,33 @@
+{
+  "name": "agentbuildkit",
+  "version": "0.0.1",
+  "description": "One-command bootstrapper for AgentBuildKit",
+  "license": "Apache-2.0",
+  "homepage": "https://agentbuildkit.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gluzio/agentbuildkit.git",
+    "directory": "npm/agentbuildkit"
+  },
+  "bugs": {
+    "url": "https://github.com/gluzio/agentbuildkit/issues"
+  },
+  "keywords": [
+    "agentbuildkit",
+    "agents",
+    "bootstrapper"
+  ],
+  "bin": {
+    "agentbuildkit": "bin/agentbuildkit.js"
+  },
+  "files": [
+    "bin/agentbuildkit.js",
+    "src"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

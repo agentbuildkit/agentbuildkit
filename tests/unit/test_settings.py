@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from agent_framework import SecretString
 
-from agent_platform.config import load_app_settings, load_openai_settings, redacted_settings
-from agent_platform.runtime import build_runtime
+from agentbuildkit.config import load_app_settings, load_openai_settings, redacted_settings
+from agentbuildkit.runtime import build_runtime
 
 _OPENAI_KEYS = (
     "OPENAI_API_KEY",
@@ -42,7 +42,6 @@ def test_env_file_loads_app_and_openai_settings(tmp_path: Path) -> None:
                 "APP_ENVIRONMENT=local",
                 "APP_ENABLE_CONSOLE_EXPORTERS=false",
                 "OPENAI_API_KEY=sk-test-secret",
-                "OPENAI_CHAT_MODEL=gpt-4.1-mini",
             ]
         ),
         encoding="utf-8",
@@ -54,7 +53,6 @@ def test_env_file_loads_app_and_openai_settings(tmp_path: Path) -> None:
     assert app_settings.get("service_name") == "client-alpha"
     assert app_settings.get("environment") == "local"
     assert app_settings.get("enable_console_exporters") is False
-    assert openai_settings.get("chat_model") == "gpt-4.1-mini"
     assert isinstance(openai_settings.get("api_key"), SecretString)
 
 
@@ -86,8 +84,8 @@ def test_missing_env_file_raises(tmp_path: Path) -> None:
 def test_runtime_loads_without_an_api_key() -> None:
     runtime = build_runtime(configure_telemetry=False)
 
-    assert runtime.openai_settings.get("api_key") is None
     assert runtime.audit_log.events == []
+    assert not hasattr(runtime, "openai_settings")
 
 
 def test_secret_values_are_masked(tmp_path: Path) -> None:

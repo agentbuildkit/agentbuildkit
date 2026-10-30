@@ -7,9 +7,9 @@ import pytest
 from agent_framework import FunctionTool
 from pydantic import BaseModel
 
-from agent_platform.guardrails import ToolEffect, prepare_tool
-from agent_platform.observability import AuditLog
-from agent_platform.workflows import (
+from agentbuildkit.guardrails import ToolEffect, prepare_tool
+from agentbuildkit.observability import AuditLog
+from agentbuildkit.workflows import (
     CheckpointCompatibilityError,
     HumanApprovalResponse,
     PendingHumanInput,

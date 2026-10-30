@@ -4,18 +4,18 @@ from pathlib import Path
 
 import pytest
 
-from agent_platform.guardrails import (
+from agentbuildkit.guardrails import (
     ApprovalDecision,
     RepeatedGrantUse,
     ToolEffect,
     execute_tool,
     prepare_tool,
 )
-from agent_platform.observability import AuditLog, argument_hash
-from agent_platform.state import registry as registry_module
-from agent_platform.state.models import GateRecord, RegistryRejected, WorkItemRecord
-from agent_platform.workflows import memory_workflow_store, sqlite_workflow_store
-from agent_platform.workflows.persistence import WorkflowStateStore
+from agentbuildkit.observability import AuditLog, argument_hash
+from agentbuildkit.state import registry as registry_module
+from agentbuildkit.state.models import GateRecord, RegistryRejected, WorkItemRecord
+from agentbuildkit.workflows import memory_workflow_store, sqlite_workflow_store
+from agentbuildkit.workflows.persistence import WorkflowStateStore
 
 SECRET = "grant-secret-must-not-be-stored"
 

@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from agent_platform.evaluation import (
+from agentbuildkit.evaluation import (
     CaseObservation,
     EvaluationCase,
     Expectation,
@@ -13,7 +13,7 @@ from agent_platform.evaluation import (
     run_evaluation,
     trace_from_audit,
 )
-from agent_platform.observability import AuditEvent, AuditLog
+from agentbuildkit.observability import AuditEvent, AuditLog
 
 SECRET = "sk-live-eval-secret"
 

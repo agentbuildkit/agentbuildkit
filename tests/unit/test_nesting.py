@@ -12,12 +12,12 @@ from agent_framework import (
 )
 from pydantic import BaseModel
 
-from agent_platform.agents import AgentDefinition, PlatformAgent, create_agent
-from agent_platform.guardrails import ToolEffect, prepare_tool
-from agent_platform.observability import AuditLog
-from agent_platform.state.models import RegistryRejected
-from agent_platform.testing import ScriptedChatClient
-from agent_platform.workflows import (
+from agentbuildkit.agents import AgentDefinition, PlatformAgent, create_agent
+from agentbuildkit.guardrails import ToolEffect, prepare_tool
+from agentbuildkit.observability import AuditLog
+from agentbuildkit.state.models import RegistryRejected
+from agentbuildkit.testing import ScriptedChatClient
+from agentbuildkit.workflows import (
     ChildEscalated,
     ChildRejected,
     WorkflowEnvelope,
@@ -30,9 +30,9 @@ from agent_platform.workflows import (
     run_workflow,
     sqlite_workflow_store,
 )
-from agent_platform.workflows.nesting import NestedWorkflowExecutor
-from agent_platform.workflows.persistence import WorkflowStateStore
-from agent_platform.workflows.runtime import AgentStep, CompiledWorkflow
+from agentbuildkit.workflows.nesting import NestedWorkflowExecutor
+from agentbuildkit.workflows.persistence import WorkflowStateStore
+from agentbuildkit.workflows.runtime import AgentStep, CompiledWorkflow
 
 
 class Note(BaseModel):
@@ -334,6 +334,8 @@ def _note_agent(name: str, client: ScriptedChatClient) -> PlatformAgent[Note, No
             instructions="Return the note.",
             input_type=Note,
             output_type=Note,
+            provider="openai",
+            model="offline-model",
         ),
         client=client,
         audit_log=AuditLog(),

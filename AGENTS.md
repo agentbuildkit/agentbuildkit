@@ -1,11 +1,11 @@
 # Agent instructions
 
-This repository builds enterprise agent teams with Microsoft Agent Framework 1.x. Follow these rules for every change.
+This repository is AgentBuildKit, a Python harness for reliable AI agents on Microsoft Agent Framework 1.x. Follow these rules for every change.
 
 ## Framework
 
 - Microsoft Agent Framework is the only agent framework. Use `agent_framework` and its first-party packages.
-- The default chat client is `OpenAIChatClient` from `agent_framework.openai`.
+- Each agent declares `provider` and `model`. The OpenAI provider constructs `OpenAIChatClient`. The Anthropic provider constructs `AnthropicClient`. Agent execution receives an injected client and does not branch on the provider.
 - Microsoft Foundry stays an optional extra (`uv sync --extra foundry`). Do not add it to the default dependencies.
 - Leave AutoGen, Semantic Kernel, and the experimental functional `@workflow` API out of this repository.
 - Prefer stable graph workflows (`WorkflowBuilder`) and the orchestration builders in `agent_framework.orchestrations`.
@@ -14,7 +14,7 @@ This repository builds enterprise agent teams with Microsoft Agent Framework 1.x
 
 - Prefer deterministic Python where the step does not need model judgment. Use an agent for judgment, tool selection, or language generation.
 - Agent and workflow inputs and outputs use Pydantic models.
-- Reusable code belongs in `src/agent_platform`. Client-specific agents and workflows belong in `src/organisation`.
+- Reusable harness code belongs in `src/agentbuildkit`. The customer-service demonstration belongs in `examples/customer_service`. Do not add customer-service concepts to the harness.
 - New behaviour ships with a test that passes without a live model. Mark live-service tests with `@pytest.mark.integration`.
 
 ## Side effects, secrets, and audit

@@ -6,11 +6,11 @@ import pytest
 from agent_framework import FunctionTool, tool
 from pydantic import BaseModel
 
-from agent_platform.agents import AgentDefinition, AgentOutputError, PlatformAgent, create_agent
-from agent_platform.guardrails import ToolEffect, ToolPolicyError, prepare_tool
-from agent_platform.observability import AuditLog
-from agent_platform.testing import ScriptedChatClient
-from agent_platform.workflows import (
+from agentbuildkit.agents import AgentDefinition, AgentOutputError, PlatformAgent, create_agent
+from agentbuildkit.guardrails import ToolEffect, ToolPolicyError, prepare_tool
+from agentbuildkit.observability import AuditLog
+from agentbuildkit.testing import ScriptedChatClient
+from agentbuildkit.workflows import (
     HumanApprovalResponse,
     RouteRejected,
     WorkflowInputError,
@@ -99,6 +99,8 @@ def _agent(
             instructions=f"You are {name}. Reply with the output schema.",
             input_type=input_type,
             output_type=output_type,
+            provider="openai",
+            model="offline-model",
             tools=tools,
         ),
         client=client,
@@ -135,6 +137,7 @@ async def test_sequential_typed_handoff() -> None:
     result = await run_workflow(workflow, envelope("corr-seq", Draft(text="TOKEN_A")))
 
     assert result.output is not None
+    assert result.output.route is None
     assert result.output.body["verdict"] == "ready"
     assert "TOKEN_A" in classifier_client.requests[0][0].text
     assert "alpha" in specialist_client.requests[0][0].text
@@ -201,6 +204,7 @@ async def test_conditional_route_follows_the_allowlisted_path() -> None:
     )
 
     assert result.output is not None
+    assert result.output.route is None
     assert result.output.body["owner"] == "specialist_b"
     assert client_a.requests == []
     assert client_b.requests
@@ -264,9 +268,46 @@ async def test_manager_decision_reaches_only_the_allowlisted_specialist() -> Non
 
     assert result.output is not None
     assert result.output.source == "specialist_a"
+    assert result.output.route == "specialist_a"
+    assert result.output.body["owner"] == "specialist_a"
     assert manager_client.requests
     assert client_a.requests
     assert client_b.requests == []
+
+
+async def test_manager_route_is_the_validated_decision_not_the_agent_name() -> None:
+    manager, _ = _agent(
+        "alex",
+        Brief,
+        Decision,
+        _dump(Decision(specialist="service", text="delegate")),
+    )
+    taylor, taylor_client = _agent(
+        "taylor",
+        Decision,
+        SpecialistNote,
+        _dump(SpecialistNote(owner="taylor", text="draft")),
+    )
+    records, records_client = _agent(
+        "records",
+        Decision,
+        SpecialistNote,
+        _dump(SpecialistNote(owner="records", text="other")),
+    )
+    workflow = manager_workflow(
+        manager,
+        {"service": taylor, "records": records},
+        name="manager-explicit-route",
+    )
+
+    result = await run_workflow(workflow, envelope("corr-explicit-route", Brief(text="delegate")))
+
+    assert result.output is not None
+    assert result.output.route == "service"
+    assert result.output.source == "taylor"
+    assert result.output.body == {"owner": "taylor", "text": "draft"}
+    assert taylor_client.requests
+    assert records_client.requests == []
 
 
 async def test_unrecognised_manager_route_is_rejected() -> None:
@@ -296,6 +337,38 @@ async def test_unrecognised_manager_route_is_rejected() -> None:
 
     with pytest.raises(RouteRejected):
         await run_workflow(workflow, envelope("corr-manager-bad", Brief(text="delegate")))
+
+    assert client_a.requests == []
+    assert client_b.requests == []
+
+
+async def test_blank_manager_route_fails_closed() -> None:
+    manager, _ = _agent(
+        "manager",
+        Brief,
+        Decision,
+        _dump(Decision(specialist="", text="delegate")),
+    )
+    specialist_a, client_a = _agent(
+        "specialist_a",
+        Decision,
+        SpecialistNote,
+        _dump(SpecialistNote(owner="specialist_a", text="delegate")),
+    )
+    specialist_b, client_b = _agent(
+        "specialist_b",
+        Decision,
+        SpecialistNote,
+        _dump(SpecialistNote(owner="specialist_b", text="delegate")),
+    )
+    workflow = manager_workflow(
+        manager,
+        {"specialist_a": specialist_a, "specialist_b": specialist_b},
+        name="manager-blank-route",
+    )
+
+    with pytest.raises(RouteRejected):
+        await run_workflow(workflow, envelope("corr-manager-blank", Brief(text="delegate")))
 
     assert client_a.requests == []
     assert client_b.requests == []
