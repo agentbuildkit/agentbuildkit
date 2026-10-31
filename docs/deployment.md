@@ -1,6 +1,6 @@
 # Deployment checklist
 
-Use this before running AgentBuildKit or the customer-service example. The example backend is fixture data. The person deploying signs each item.
+Use this before running AgentBuildKit or the customer-service example. The example backend is fixture data. Check each item before a deployment.
 
 ## Secrets
 
@@ -27,7 +27,7 @@ Use this before running AgentBuildKit or the customer-service example. The examp
 
 - [ ] Each agent declares its own provider and model. The example roles declare `openai` and `gpt-4.1-mini`.
 - [ ] `OPENAI_API_KEY` is set for a live OpenAI agent. `ANTHROPIC_API_KEY` is set only when a role uses Anthropic.
-- [ ] Foundry is installed only when this engagement has agreed to use it.
+- [ ] Foundry is installed only when the deployment is configured to use it.
 
 ## Tool permissions
 
@@ -44,7 +44,7 @@ Use this before running AgentBuildKit or the customer-service example. The examp
 ## Evaluation
 
 - [ ] The offline suite pass rate is 1.0.
-- [ ] The agreed threshold is written here: pass rate ______.
+- [ ] Record the required pass rate: ______.
 - [ ] A failing case blocks release.
 
 ## Offline tests
@@ -74,7 +74,7 @@ Use this before running AgentBuildKit or the customer-service example. The examp
 - [ ] The data volume is retained across the rollback.
 - [ ] The team knows that an in-flight approval resumes only when the workflow definition still matches the stored hash.
 
-## Business owner sign-off
+## Sign-off
 
-- [ ] The owner has seen the smoke-test outcomes and the success metrics from the discovery template.
+- [ ] The smoke-test outcomes were reviewed.
 - [ ] Name, date, and decision:

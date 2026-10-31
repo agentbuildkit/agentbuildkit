@@ -2,7 +2,7 @@
 
 ## 0.1.0
 
-Initial public release. This version is prepared for publication. It has not been published to PyPI or npm.
+Initial public release.
 
 - Python package `agentbuildkit` 0.1.0 and command `agentkit`.
 - Per-agent OpenAI and Anthropic provider and model selection. One workflow can mix both. A scripted client remains available for tests and the offline demo.
@@ -29,4 +29,3 @@ Earlier reusable release of the agent organisation template, before this product
 - OpenTelemetry export, correlation ids, and audit events that omit prompts and secrets.
 - A fictional B2B customer-service organisation as the working example.
 - A non-root Docker image that runs the existing command.
-- A client playbook: discovery, specification, Cursor prompt, and deployment checklist.

@@ -53,9 +53,6 @@ build-backend = "hatchling.build"
 package = true
 default-groups = ["dev"]
 
-[tool.hatch.build.targets.sdist]
-exclude = ["/docs/archive/consulting"]
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentbuildkit"]
 

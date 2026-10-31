@@ -28,13 +28,11 @@ It currently builds on Microsoft Agent Framework. Each agent declares its own pr
 npx agentbuildkit
 ```
 
-**Available after the first npm and PyPI release.** Neither package has been published yet.
-
-After that release, the command installs the Python CLI with [uv](https://docs.astral.sh/uv/) and then runs `agentkit doctor`. In an interactive terminal it offers the offline demo.
+The command installs the Python CLI with [uv](https://docs.astral.sh/uv/) and then runs `agentkit doctor`. In an interactive terminal it offers the offline demo.
 
 ### Development install
 
-From a clone of this repository, before either package is published:
+From a clone of this repository:
 
 ```bash
 node npm/agentbuildkit/bin/agentbuildkit.js --source local
