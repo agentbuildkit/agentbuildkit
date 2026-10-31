@@ -10,7 +10,7 @@ const secret = "sk-bootstrap-secret";
 test("package reserves the agentbuildkit command", () => {
   const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
   assert.equal(pkg.name, "agentbuildkit");
-  assert.equal(pkg.version, "0.0.1");
+  assert.equal(pkg.version, "0.0.2");
   assert.equal(pkg.description, "One-command bootstrapper for AgentBuildKit");
   assert.equal(pkg.bin.agentbuildkit, "bin/agentbuildkit.js");
   assert.deepEqual(pkg.files, ["bin/agentbuildkit.js", "src"]);

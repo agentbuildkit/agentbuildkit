@@ -15,14 +15,18 @@ function askYesNo(promptText, { input, output, interactive }) {
       settled = true;
       input.removeListener("data", onData);
       input.removeListener("end", onEnd);
+      // Drop the flowing read before the caller inherits stdin. Node does not
+      // pause an inherited descriptor, so the next line would be discarded.
+      releaseInput(input);
       resolve(value);
     };
     const onData = (chunk) => {
       answer += chunk;
-      if (!answer.includes("\n")) {
+      const newline = answer.indexOf("\n");
+      if (newline === -1) {
         return;
       }
-      finish(isYes(answer));
+      finish(isYes(answer.slice(0, newline)));
     };
     const onEnd = () => finish(false);
     input.on("data", onData);
@@ -33,9 +37,19 @@ function askYesNo(promptText, { input, output, interactive }) {
   });
 }
 
+function releaseInput(input) {
+  if (input && typeof input.pause === "function") {
+    input.pause();
+  }
+  const handle = input && input._handle;
+  if (handle && typeof handle.setBlocking === "function") {
+    handle.setBlocking(true);
+  }
+}
+
 function isYes(answer) {
-  const value = answer.trim().toLowerCase();
+  const value = String(answer).trim().toLowerCase();
   return value === "" || value === "y" || value === "yes";
 }
 
-module.exports = { askYesNo, isYes };
+module.exports = { askYesNo, isYes, releaseInput };

@@ -7,7 +7,7 @@ const { findExecutable, runCommand } = require("./commands");
 const { BootstrapError } = require("./errors");
 const { installProduct, locateAgentkit, runDoctor } = require("./installer");
 const { assertNodeVersion, detectPlatform } = require("./platform");
-const { askYesNo } = require("./prompt");
+const { askYesNo, releaseInput } = require("./prompt");
 const { resolveSource } = require("./source");
 const { ensureUv, installUv } = require("./uv");
 
@@ -162,6 +162,7 @@ async function bootstrap(options) {
     log("Demo skipped. Run `agentkit demo` when you want it.");
     return 0;
   }
+  releaseInput(options.input);
   const demo = await options.run(agentkit.command, ["demo"], { stdio: "inherit" });
   if (demo.code !== 0) {
     throw new BootstrapError("agentkit demo failed. Run `agentkit demo` to see the result.");
