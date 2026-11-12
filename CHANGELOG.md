@@ -1,5 +1,9 @@
 # Changelog
 
+## npm 0.0.2
+
+- The bootstrapper stops reading the terminal before `agentkit demo`. An approval entered after a fresh install reaches the Python CLI.
+
 ## 0.1.0
 
 Initial public release.
