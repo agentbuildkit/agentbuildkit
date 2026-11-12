@@ -4,6 +4,12 @@
 
 - The bootstrapper stops reading the terminal before `agentkit demo`. An approval entered after a fresh install reaches the Python CLI.
 
+## Unreleased
+
+- The customer-service example builds its agents from `team.json` through the team bundle loader.
+- A local dashboard runs that team, records approval decisions, and shows the audit log and evaluation report.
+- A restarted dashboard recovers a pending approval, its customer reference, and its action arguments. An uncertain service action is not run again. Approval does not run when those arguments were not recovered.
+
 ## 0.1.0
 
 Initial public release.

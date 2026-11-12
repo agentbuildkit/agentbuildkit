@@ -492,8 +492,8 @@ def require_label(value: str, message: str) -> str:
 
 
 def require_argument_hash(value: str) -> str:
-    """Accept a sha256 hex digest or the existing lifecycle sentinel."""
-    if value == "lifecycle" or _HASH.fullmatch(value) is not None:
+    """Accept a sha256 hex digest or a sentinel that contains no argument value."""
+    if value in {"lifecycle", "agent-run"} or _HASH.fullmatch(value) is not None:
         return value
     raise RegistryRejected("Ledger argument hash is not allowed.")
 

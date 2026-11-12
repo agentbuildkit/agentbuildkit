@@ -133,6 +133,8 @@ class _Backend(Protocol):
 
     def finish_effect(self, *, scope: str, key: str, status: EffectStatus) -> None: ...
 
+    def close(self) -> None: ...
+
     def platform_version(self) -> str: ...
 
     def platform_registry(self) -> PlatformRegistry | None: ...
@@ -283,6 +285,10 @@ class WorkflowStateStore(PlatformStateMixin):
         """Record the outcome of a reserved side effect."""
         self._backend.finish_effect(scope=self.scope, key=key, status=status)
 
+    def close(self) -> None:
+        """Close stored connections from the thread that opened them."""
+        self._backend.close()
+
     def mark_pending(self, request_id: str, status: PendingStatus) -> None:
         """Update the visible status of a paused request."""
         self._backend.mark_pending(scope=self.scope, request_id=request_id, status=status)
@@ -413,6 +419,9 @@ class _MemoryBackend:
     def finish_effect(self, *, scope: str, key: str, status: EffectStatus) -> None:
         if (scope, key) in self.effects:
             self.effects[(scope, key)] = _EffectRow(status=status)
+
+    def close(self) -> None:
+        """Memory state has no database connection."""
 
 
 class _SqliteBackend:
@@ -673,6 +682,9 @@ class _SqliteBackend:
     def _commit(self) -> None:
         self._connection.commit()
         self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    def close(self) -> None:
+        self._connection.close()
 
 
 def memory_workflow_store(scope: str, audit_log: AuditLog | None = None) -> WorkflowStateStore:

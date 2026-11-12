@@ -7,7 +7,7 @@ This package demonstrates an agent team built with AgentBuildKit. It is fixture 
 - Sam reads account data. Taylor reads service data and may propose one action.
 - Jordan approves, rejects, or escalates the draft.
 - An informational answer is returned immediately.
-- A service change pauses for a person, is stored, and runs once after approval.
+- A service change pauses for a person and is stored. Approval runs it at most once.
 
 The business system is an in-process HTTP mock at `http://business.test`. It does not call a network. `LOCAL_MOCK_TOKEN` is a fixture marker. The only customer reference is `A-100`, with fixture account name Northwind.
 
@@ -35,6 +35,12 @@ A local live run:
 
 ```bash
 PYTHONPATH=examples uv run python -m customer_service
+```
+
+The same team can be opened in a local dashboard. It uses the application service for runs, approvals, the audit log, and evaluation. Set `APP_STATE_DIRECTORY` so a restarted process can recover pending approvals and the audit ledger. The customer reference, action arguments, and shown outcome text are stored beside that directory. They are not written to the audit ledger and are not exported telemetry. If those arguments were not recovered, approval does not run the action. If the process stops after the action is reserved and before completion is recorded, it stays unresolved and is not sent again. This is not exactly-once delivery to the business system.
+
+```bash
+PYTHONPATH=examples uv run python -m customer_service.dashboard
 ```
 
 A live run of the default team needs `OPENAI_API_KEY`. The model for each role is the model on that agent's definition.

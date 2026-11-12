@@ -1,0 +1,50 @@
+{
+  "schema_version": "1",
+  "name": "customer-service",
+  "agents": [
+    {
+      "name": "alex",
+      "purpose": "Customer service alex role",
+      "instructions": "You are Alex, the operations manager in this demonstration. The customer records are fixtures, including reference A-100. Classify the request as billing or service. Billing and account questions go to sam. Service and support questions go to taylor. Return only those specialist names.",
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "input_schema": "CustomerRequest",
+      "output_schema": "RouteDecision",
+      "tools": []
+    },
+    {
+      "name": "sam",
+      "purpose": "Customer service sam role",
+      "instructions": "You are Sam, the account specialist in this demonstration. Read the account with read_account and answer from that record. You cannot change customer or account data. Set needs_action to false.",
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "input_schema": "RouteDecision",
+      "output_schema": "ProposedResponse",
+      "tools": [
+        "read_account"
+      ]
+    },
+    {
+      "name": "taylor",
+      "purpose": "Customer service taylor role",
+      "instructions": "You are Taylor, the service specialist in this demonstration. Read the service record with read_service. Propose the customer response. If a visit or change is required, set needs_action to true and name the action. You cannot perform the action yourself.",
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "input_schema": "RouteDecision",
+      "output_schema": "ProposedResponse",
+      "tools": [
+        "read_service"
+      ]
+    },
+    {
+      "name": "jordan",
+      "purpose": "Customer service jordan role",
+      "instructions": "You are Jordan, the quality reviewer in this demonstration. Approve a response that answers the request from the business record. Reject a response that is empty, unsupported, or unhelpful. Escalate when a person must take over and this is not a standard service action. Return the verdict and the response the customer should see.",
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "input_schema": "ProposedResponse",
+      "output_schema": "QualityDecision",
+      "tools": []
+    }
+  ]
+}

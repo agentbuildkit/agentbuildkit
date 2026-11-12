@@ -1,6 +1,6 @@
 """AgentBuildKit command line.
 
-``demo``, ``doctor``, and ``version`` are the current commands. Add later
+``demo``, ``doctor``, ``version``, and ``team`` are the current commands. Add later
 commands as new subparsers without changing the ones that already exist.
 """
 
@@ -14,6 +14,7 @@ from collections.abc import Callable, Sequence
 
 import agentbuildkit
 from agentbuildkit.demo import DemoError, run_demo
+from agentbuildkit.teams import load_bundle
 
 _OPENAI_KEY = "OPENAI_API_KEY"
 _ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
@@ -39,6 +40,14 @@ def run(argv: Sequence[str]) -> int:
         return 0
     if command == "doctor":
         return doctor()
+    if command == "team":
+        try:
+            load_bundle(args.path)
+        except (OSError, ValueError):
+            print("Team bundle is unreadable or invalid.", file=sys.stderr)
+            return 1
+        print("Team bundle structure is valid. Runtime bindings have not been checked.")
+        return 0
     if command == "demo":
         return _demo(approve=args.approve, reject=args.reject, verbose=args.verbose)
     print("Unknown command.", file=sys.stderr)
@@ -76,6 +85,10 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("version", help="Print the AgentBuildKit version.")
     commands.add_parser("doctor", help="Check the local installation.")
+    team = commands.add_parser("team", help="Inspect declarative team configuration.")
+    team_commands = team.add_subparsers(dest="team_command", required=True)
+    validate = team_commands.add_parser("validate", help="Validate a JSON team bundle.")
+    validate.add_argument("path", help="Path to the JSON bundle.")
     demo = commands.add_parser("demo", help="Run the offline harness demonstration.")
     choice = demo.add_mutually_exclusive_group()
     choice.add_argument(
