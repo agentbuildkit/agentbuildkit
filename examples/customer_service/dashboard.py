@@ -7,35 +7,86 @@ by any path other than ``resume_service_action``.
 import asyncio
 import threading
 import uuid
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
-from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, cast
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 from agentbuildkit.evaluation import EvaluationReport
 from agentbuildkit.observability import AuditEvent
 from agentbuildkit.state.models import RegistryRejected, require_argument_hash
 from agentbuildkit.workflows import (
-    LedgerRecord,
     PendingRequest,
     WorkflowStateStore,
     idempotency_key,
 )
+from customer_service.dashboard_model import (
+    ALREADY_HANDLED,
+    COMPLETED_RESPONSE,
+    MISSING_ARGUMENTS,
+    PENDING_RESPONSE,
+    UNRESOLVED_RESPONSE,
+    Pause,
+    build_runs,
+    merge_audit,
+)
+from customer_service.dashboard_view import AgentInfo, Page, Snapshot, render_page
 from customer_service.evaluation import run_organisation_evaluation
 from customer_service.models import CustomerRequest, FinalOutcome
 from customer_service.recovery import ActionRecovery, MemoryActionRecovery
-from customer_service.service import handle_request, resume_service_action
+from customer_service.service import (
+    DECLINED_ACTION_RESPONSE,
+    handle_request,
+    resume_service_action,
+)
 from customer_service.team import Organisation, customer_team_bundle
 
 Evaluate = Callable[[], Coroutine[Any, Any, EvaluationReport]]
-_ALREADY = "The service action was already handled."
-_UNRESOLVED = "The service action is unresolved and will not be repeated."
-_MISSING = "The service action cannot be resumed because its arguments were not recovered."
-_PENDING = "The service action is waiting for approval."
-_COMPLETED = "The service action was completed."
-_DECLINED = "The service action was not approved."
+_ALREADY = ALREADY_HANDLED
+_UNRESOLVED = UNRESOLVED_RESPONSE
+_MISSING = MISSING_ARGUMENTS
+_PENDING = PENDING_RESPONSE
+_COMPLETED = COMPLETED_RESPONSE
+_DECLINED = DECLINED_ACTION_RESPONSE
+_NOT_FOUND = "That approval could not be found. It may already have been decided."
+
+# Roles come from the example's workflow, not from team.json.
+ROLES: dict[str, tuple[str, str]] = {
+    "alex": ("Manager", "Classifies each request as billing or service and names a specialist."),
+    "sam": (
+        "Account specialist",
+        "Answers account questions from the account record. Cannot change data.",
+    ),
+    "taylor": (
+        "Service specialist",
+        "Reads the service record and may propose one service action.",
+    ),
+    "jordan": (
+        "Reviewer",
+        "Approves, rejects or escalates the draft before the customer sees it.",
+    ),
+}
+STATIC_DIRECTORY = Path(__file__).with_name("static")
+_STATIC_TYPES: dict[str, str] = {
+    "dashboard.css": "text/css; charset=utf-8",
+    "dashboard.js": "text/javascript; charset=utf-8",
+    "fonts/instrument-sans-latin-400-normal.woff2": "font/woff2",
+    "fonts/instrument-sans-latin-500-normal.woff2": "font/woff2",
+    "fonts/instrument-sans-latin-600-normal.woff2": "font/woff2",
+    "fonts/geist-mono-latin-400-normal.woff2": "font/woff2",
+    "fonts/geist-mono-latin-500-normal.woff2": "font/woff2",
+}
+_SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
+    (
+        "Content-Security-Policy",
+        "default-src 'none'; style-src 'self'; script-src 'self'; font-src 'self'; "
+        "img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    ),
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+)
 
 
 class DashboardService:
@@ -54,6 +105,7 @@ class DashboardService:
         self.recovery = recovery or MemoryActionRecovery()
         self.report: EvaluationReport | None = None
         self.error = ""
+        self.draft: tuple[str, str] | None = None
         self._evaluate = evaluate or run_organisation_evaluation
         organisation.audit_log.add_sink(_LedgerSink(store))
         self.outcomes = self._restored_outcomes()
@@ -153,114 +205,78 @@ class DashboardService:
             correlation_id=pending.correlation_id,
         )
 
-    def _open_approvals(self) -> tuple[tuple[PendingRequest, str, str], ...]:
-        open_rows: list[tuple[PendingRequest, str, str]] = []
-        for row in self.store.list_pending(status="pending"):
-            if self.store.effect_for(_effect_key(row)) is not None:
-                continue
-            saved = self.recovery.pause_for(row.request_id)
-            reference = "" if saved is None else saved[0]
-            if saved is None:
-                service_action = "arguments were not recovered"
-            else:
-                service_action = saved[1].get("action", "")
-            open_rows.append((row, reference, service_action))
-        return tuple(open_rows)
-
-    def _audit_rows(self) -> tuple[tuple[str, str, str, str, str, str], ...]:
-        rows: list[tuple[str, str, str, str, str, str]] = []
-        seen: set[tuple[str, str, str, str, str, str]] = set()
-        combined: tuple[AuditEvent | LedgerRecord, ...] = (
-            *self.store.list_ledger(),
-            *self.organisation.audit_log.events,
-        )
-        for event in combined:
-            item = _audit_identity(event)
-            if item in seen:
-                continue
-            seen.add(item)
-            rows.append(item)
-        return tuple(rows)
-
     async def run_evaluation(self) -> EvaluationReport:
         """Run the offline suite and keep the report for the page."""
         self.report = await self._evaluate()
         return self.report
 
-    def render(self) -> str:
-        """Render the current session. Secrets are not included."""
+    @property
+    def persistent(self) -> bool:
+        """True when approvals and outcomes are kept outside this process."""
+        return not isinstance(self.recovery, MemoryActionRecovery)
+
+    def _pauses(self) -> tuple[Pause, ...]:
+        pauses: list[Pause] = []
+        for row in self.store.list_pending():
+            saved = self.recovery.pause_for(row.request_id)
+            pauses.append(
+                Pause(
+                    request=row,
+                    effect=_effect_status(self.store.effect_for(_effect_key(row))),
+                    reference="" if saved is None else saved[0],
+                    arguments=None if saved is None else saved[1],
+                )
+            )
+        return tuple(pauses)
+
+    def snapshot(self) -> Snapshot:
+        """Read the current state for a page. Nothing is changed or run."""
         bundle = customer_team_bundle()
-        rows: list[str] = []
-        for agent in bundle.agents:
-            tools = ", ".join(agent.tools) if agent.tools else "none"
-            rows.append(
-                "<li>"
-                f"{escape(agent.name)} · {escape(agent.provider)} / {escape(agent.model)}"
-                f" · tools: {escape(tools)}"
-                "</li>"
+        agents = tuple(
+            AgentInfo(
+                name=agent.name,
+                role=ROLES.get(agent.name, ("Agent", agent.purpose))[0],
+                job=ROLES.get(agent.name, ("Agent", agent.purpose))[1],
+                provider=agent.provider,
+                model=agent.model,
+                input_schema=agent.input_schema,
+                output_schema=agent.output_schema,
+                tools=tuple(agent.tools),
+                instructions=agent.instructions,
             )
-        pending = "".join(
-            (
-                "<form method='post' action='/decide'>"
-                f"<input type='hidden' name='request_id' value='{escape(row.request_id)}'>"
-                f"<p>{escape(reference)} · {escape(service_action)} · "
-                f"{escape(row.action)} · {escape(row.correlation_id)}</p>"
-                "<button name='decision' value='approve'>Approve</button>"
-                "<button name='decision' value='reject'>Reject</button>"
-                "</form>"
-            )
-            for row, reference, service_action in self._open_approvals()
+            for agent in bundle.agents
         )
-        outcomes = "".join(
-            (
-                "<li>"
-                f"{escape(item.status)} · {escape(item.specialist or '-')} · "
-                f"{escape(item.response)} · {escape(item.correlation_id)}"
-                "</li>"
-            )
-            for item in self.outcomes
+        pauses = self._pauses()
+        by_correlation = {pause.request.correlation_id: pause for pause in pauses}
+        open_approvals = tuple(
+            pause for pause in pauses if pause.request.status == "pending" and pause.effect is None
         )
-        events = "".join(
-            (
-                "<li>"
-                f"{escape(agent)} · {escape(tool)} · {escape(kind)} · "
-                f"{escape(approval)} · {escape(outcome)} · {escape(correlation)}"
-                "</li>"
-            )
-            for agent, tool, kind, approval, outcome, correlation in self._audit_rows()
+        return Snapshot(
+            team_name=bundle.name,
+            agents=agents,
+            runs=build_runs(self.outcomes, by_correlation),
+            approvals=open_approvals,
+            audit=merge_audit(self.store.list_ledger(), self.organisation.audit_log.events),
+            report=self.report,
+            error=self.error,
+            draft=self.draft,
+            persistent=self.persistent,
         )
-        report = "<p>No evaluation has been run.</p>"
-        if self.report is not None:
-            cases = "".join(
-                f"<li>{escape(case.name)} · {'PASS' if case.passed else 'FAIL'}</li>"
-                for case in self.report.cases
-            )
-            report = f"<p>{self.report.passed} of {self.report.total} passed.</p><ul>{cases}</ul>"
-        notice = f"<p>{escape(self.error)}</p>" if self.error else ""
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="utf-8"><title>{escape(bundle.name)}</title></head>
-<body>
-<h1>{escape(bundle.name)}</h1>
-{notice}
-<ul>{"".join(rows)}</ul>
-<form method="post" action="/run">
-<label>Reference <input name="reference" value="A-100"></label>
-<label>Message <input name="message" required></label>
-<button>Run</button>
-</form>
-<h2>Outcomes</h2>
-<ul>{outcomes}</ul>
-<h2>Pending approvals</h2>
-{pending or "<p>None.</p>"}
-<h2>Audit</h2>
-<ul>{events}</ul>
-<h2>Evaluation</h2>
-<form method="post" action="/evaluate"><button>Run evaluation</button></form>
-{report}
-</body>
-</html>
-"""
+
+    def page(self, path: str = "/", query: Mapping[str, str] | None = None) -> Page:
+        """Render one page with its HTTP status. Secrets are not included."""
+        return render_page(self.snapshot(), path, query)
+
+    def render(self, path: str = "/", query: Mapping[str, str] | None = None) -> str:
+        """Render one page. Secrets are not included."""
+        return self.page(path, query).body
+
+    def decision_target(self, request_id: str) -> str:
+        """Where the page goes after a decision: the run, or the approvals list."""
+        found = self.store.pending_for(request_id)
+        if found is None:
+            return "/approvals"
+        return f"/runs/{found[0].correlation_id}"
 
 
 def describe_error(error: BaseException) -> str:
@@ -376,43 +392,90 @@ def serve(
         raise failed[0]
     service = started[0]
 
-    def invoke(awaitable: Coroutine[Any, Any, object]) -> None:
+    def invoke(awaitable: Coroutine[Any, Any, object]) -> object | None:
         future: Future[object] = asyncio.run_coroutine_threadsafe(awaitable, loop)
         try:
-            future.result()
+            return future.result()
+        except KeyError:
+            service.error = _NOT_FOUND
         except Exception as exc:
             service.error = describe_error(exc)
+        return None
 
-    def render() -> bytes:
-        future = asyncio.run_coroutine_threadsafe(_render(service), loop)
+    def on_owner(call: Callable[[], object]) -> object:
+        future = asyncio.run_coroutine_threadsafe(_call(call), loop)
         return future.result()
+
+    def page(path: str, query: dict[str, str]) -> Page:
+        result = on_owner(lambda: service.page(path, query))
+        return cast(Page, result)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            body = render()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            parts = urlsplit(self.path)
+            if parts.path.startswith("/static/"):
+                self._static(parts.path.removeprefix("/static/"))
+                return
+            query = {key: values[0] for key, values in parse_qs(parts.query).items() if values}
+            rendered = page(parts.path, query)
+            self._send(
+                rendered.status,
+                rendered.body.encode(),
+                "text/html; charset=utf-8",
+                cache="no-store",
+            )
 
         def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length", "0"))
             fields = parse_qs(self.rfile.read(length).decode())
+            path = urlsplit(self.path).path
             service.error = ""
-            if self.path == "/run":
+            if path == "/run":
                 reference = _field(fields, "reference")
                 message = _field(fields, "message")
-                invoke(service.submit(reference, message))
-            elif self.path == "/decide":
+                service.draft = None
+                outcome = invoke(service.submit(reference, message))
+                if isinstance(outcome, FinalOutcome):
+                    location = f"/runs/{outcome.correlation_id}"
+                else:
+                    service.draft = (reference, message)
+                    location = "/?new=1"
+            elif path == "/decide":
                 request_id = _field(fields, "request_id")
                 approved = _field(fields, "decision") == "approve"
+                location = cast(str, on_owner(lambda: service.decision_target(request_id)))
                 invoke(service.decide(request_id, approved=approved))
-            elif self.path == "/evaluate":
+            elif path == "/evaluate":
                 invoke(service.run_evaluation())
+                location = "/evaluation"
+            else:
+                rendered = page("/404", {})
+                self._send(
+                    404, rendered.body.encode(), "text/html; charset=utf-8", cache="no-store"
+                )
+                return
             self.send_response(303)
-            self.send_header("Location", "/")
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
             self.end_headers()
+
+        def _static(self, name: str) -> None:
+            content_type = _STATIC_TYPES.get(name)
+            if content_type is None:
+                self._send(404, b"Not found", "text/plain; charset=utf-8", cache="no-store")
+                return
+            body = (STATIC_DIRECTORY / name).read_bytes()
+            self._send(200, body, content_type, cache="max-age=300")
+
+        def _send(self, code: int, body: bytes, content_type: str, *, cache: str) -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", cache)
+            for name, value in _SECURITY_HEADERS:
+                self.send_header(name, value)
+            self.end_headers()
+            self.wfile.write(body)
 
         def log_message(self, format: str, *args: object) -> None:
             del format, args
@@ -463,8 +526,8 @@ def main() -> None:
         binding.shutdown()
 
 
-async def _render(service: DashboardService) -> bytes:
-    return service.render().encode()
+async def _call(call: Callable[[], object]) -> object:
+    return call()
 
 
 async def _close_service(service: DashboardService) -> None:
@@ -542,19 +605,6 @@ def _same_outcome(outcomes: list[FinalOutcome], outcome: FinalOutcome) -> bool:
     return any(
         item.correlation_id == outcome.correlation_id and item.status == outcome.status
         for item in outcomes
-    )
-
-
-def _audit_identity(
-    event: AuditEvent | LedgerRecord,
-) -> tuple[str, str, str, str, str, str]:
-    return (
-        event.agent_name or "-",
-        event.tool_name,
-        event.kind,
-        event.approval,
-        event.outcome,
-        event.correlation_id,
     )
 
 

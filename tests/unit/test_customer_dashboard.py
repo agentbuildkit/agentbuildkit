@@ -59,12 +59,15 @@ async def test_dashboard_runs_a_read_and_shows_audit() -> None:
         outcome = await service.submit("A-100", "Please explain the latest invoice.")
         await service.run_evaluation()
         page = service.render()
+        audit = service.render("/audit")
     finally:
         await service.organisation.aclose()
 
     assert outcome.status == "completed"
-    assert "alex" in page
+    assert "Alex" in page
     assert "1 of 1 passed." in page
+    assert "Agent run" in audit
+    assert LOCAL_MOCK_TOKEN not in audit
     assert LOCAL_MOCK_TOKEN not in page
     assert "RAW-MODEL-OUTPUT" not in page
     service.outcomes.append(
@@ -152,6 +155,7 @@ async def test_pending_approval_survives_a_fresh_dashboard(tmp_path: Path) -> No
     service = _durable("approved-service-action-executes-once", actions, workflow, recovery)
     try:
         page = service.render()
+        audit = service.render("/audit")
         outcome = await service.decide(request_id, approved=True)
         repeated = await service.decide(request_id, approved=True)
     finally:
@@ -159,7 +163,8 @@ async def test_pending_approval_survives_a_fresh_dashboard(tmp_path: Path) -> No
 
     assert "A-100" in page
     assert "pending_approval" in page
-    assert "workflow_paused" in page
+    assert "workflow_paused" in audit
+    assert LOCAL_MOCK_TOKEN not in audit
     assert LOCAL_MOCK_TOKEN not in page
     assert outcome.status == "completed"
     assert outcome.reference == "A-100"
@@ -245,12 +250,13 @@ async def test_completed_and_rejected_stay_closed_after_restart(tmp_path: Path) 
     )
     try:
         page = reopened.render()
+        audit = reopened.render("/audit")
         outcome = await reopened.decide(request_id, approved=True)
     finally:
         await reopened.organisation.aclose()
 
     assert "completed" in page
-    assert "workflow_paused" in page
+    assert "workflow_paused" in audit
     assert outcome.response == "The service action was already handled."
     assert approved_actions == ["A-100:schedule_visit"]
 
@@ -417,7 +423,7 @@ def test_http_disk_store_stays_on_one_thread(tmp_path: Path) -> None:
     try:
         restored = _http(second, "GET", "/")
         assert "rejected" in restored
-        assert "workflow_paused" in restored
+        assert "workflow_paused" in _http(second, "GET", "/audit")
         assert LOCAL_MOCK_TOKEN not in restored
         paused = _http(
             second,

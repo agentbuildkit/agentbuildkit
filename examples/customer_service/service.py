@@ -43,6 +43,11 @@ _PENDING = "The service action is waiting for approval."
 _COMPLETED_ACTION = "The service action was completed."
 _DECLINED_ACTION = "The service action was not approved."
 
+# Read by the dashboard to label an outcome. They do not change what runs.
+REVIEW_REJECTED_RESPONSE = _REJECTED
+UNSPECIFIED_ACTION_RESPONSE = _UNSPECIFIED
+DECLINED_ACTION_RESPONSE = _DECLINED_ACTION
+
 
 @dataclass(frozen=True)
 class ServiceResult:

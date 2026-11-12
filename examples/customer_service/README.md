@@ -43,4 +43,6 @@ The same team can be opened in a local dashboard. It uses the application servic
 PYTHONPATH=examples uv run python -m customer_service.dashboard
 ```
 
+The overview lists what needs attention (approvals waiting, and actions that failed or whose outcome is unknown), recent runs, the team, and the offline evaluation. A run page shows the route recorded for that request, its status history, the approval decision, and its audit events. The page shows only what the service, workflow store, recovery file, and audit ledger record: outcomes have no timestamps, and the customer's message is not stored. The styles, script, and fonts are served from `static/`; the fonts are Instrument Sans and Geist Mono under the SIL Open Font Licence.
+
 A live run of the default team needs `OPENAI_API_KEY`. The model for each role is the model on that agent's definition.

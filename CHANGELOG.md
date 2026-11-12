@@ -9,6 +9,9 @@
 - The customer-service example builds its agents from `team.json` through the team bundle loader.
 - A local dashboard runs that team, records approval decisions, and shows the audit log and evaluation report.
 - A restarted dashboard recovers a pending approval, its customer reference, and its action arguments. An uncertain service action is not run again. Approval does not run when those arguments were not recovered.
+- The dashboard is redesigned around everyday operation: a needs-attention list, recent runs, and a run page with the recorded route, status history, approval decision, and filterable audit timeline. Approvals, Audit, Evaluation, and Team details have their own pages.
+- The dashboard names failed and unresolved service actions separately, from the stored effect status. Execution and approval behaviour are unchanged.
+- Instrument Sans and Geist Mono are bundled under `examples/customer_service/static/fonts` with their SIL Open Font Licence files. The dashboard needs no network access and sends a restrictive Content-Security-Policy.
 
 ## 0.1.0
 
