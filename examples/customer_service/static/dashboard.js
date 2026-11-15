@@ -4,6 +4,8 @@
 
   // Show a busy state while a POST is in flight. The clicked button's value is
   // copied into a hidden field first, because a disabled button is not submitted.
+  // Disabling during the submit event itself cancels the POST in some browsers,
+  // which leaves the label stuck on the busy text. Disable on the next turn.
   document.querySelectorAll("form[data-busy-label]").forEach(function (form) {
     form.addEventListener("submit", function (event) {
       var submitter = event.submitter;
@@ -14,9 +16,6 @@
         carried.value = submitter.value;
         form.appendChild(carried);
       }
-      form.querySelectorAll("button").forEach(function (button) {
-        button.disabled = true;
-      });
       form.setAttribute("aria-busy", "true");
       var target = submitter || form.querySelector("button[type=submit]");
       if (target) {
@@ -32,6 +31,11 @@
       if (status) {
         status.textContent = status.getAttribute("data-busy-status");
       }
+      window.setTimeout(function () {
+        form.querySelectorAll("button").forEach(function (button) {
+          button.disabled = true;
+        });
+      }, 0);
     });
   });
 

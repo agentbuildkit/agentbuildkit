@@ -12,6 +12,7 @@
 - The dashboard is redesigned around everyday operation: a needs-attention list, recent runs, and a run page with the recorded route, status history, approval decision, and filterable audit timeline. Approvals, Audit, Evaluation, and Team details have their own pages.
 - The dashboard names failed and unresolved service actions separately, from the stored effect status. Execution and approval behaviour are unchanged.
 - Instrument Sans and Geist Mono are bundled under `examples/customer_service/static/fonts` with their SIL Open Font Licence files. The dashboard needs no network access and sends a restrictive Content-Security-Policy.
+- The customer-service dashboard can connect one Google Sheets account through a custom Composio auth config limited to `spreadsheets.readonly`. Sam's connected mode reads one saved spreadsheet and range with `GOOGLESHEETS_BATCH_GET`. A read outside that window, a write, or an oversized result is rejected. Demo mode stays labelled. A missing connection does not return the demo fixture. Disconnect removes the local connection and does not revoke Google access. The Composio key stays in the server environment. Connect does not use Composio's managed Google app.
 
 ## 0.1.0
 

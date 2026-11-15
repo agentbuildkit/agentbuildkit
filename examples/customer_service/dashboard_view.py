@@ -45,6 +45,29 @@ class AgentInfo:
 
 
 @dataclass(frozen=True)
+class AssignmentInfo:
+    """One agent's saved spreadsheet window and data mode."""
+
+    agent_name: str
+    connection_id: str
+    label: str
+    tools: tuple[str, ...]
+    spreadsheet_id: str
+    cell_range: str
+    mode: str
+
+
+@dataclass(frozen=True)
+class ConnectionInfo:
+    """One connected account as the page may show it. No credentials."""
+
+    connection_id: str
+    label: str
+    status: str
+    agents: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Snapshot:
     """Everything one page needs, read on the database owner thread."""
 
@@ -57,6 +80,12 @@ class Snapshot:
     error: str
     draft: tuple[str, str] | None
     persistent: bool
+    connections: tuple[ConnectionInfo, ...] = ()
+    assignments: tuple[AssignmentInfo, ...] = ()
+    composio_configured: bool = False
+    composio_auth_missing: bool = False
+    composio_package_missing: bool = False
+    sam_mode: str = "demo"
 
 
 @dataclass(frozen=True)
@@ -133,6 +162,11 @@ _ICONS = {
         '<path d="M2 13c.4-2 1.8-3 3.5-3s3.1 1 3.5 3'
         'M9.5 12.8c.3-1.5 1.2-2.3 2.4-2.3 1.1 0 2 .8 2.3 2.3"/>'
     ),
+    "link": (
+        '<path d="M6.4 9.6 9.6 6.4"/>'
+        '<path d="M7.2 5.2 8.4 4a2.2 2.2 0 0 1 3.1 3.1L10.3 8.3"/>'
+        '<path d="M8.8 10.8 7.6 12a2.2 2.2 0 0 1-3.1-3.1L5.7 7.7"/>'
+    ),
     "disk": (
         '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>'
         '<path d="M5 2.5v3.5h6V2.5M5 13.5V9.5h6v4"/>'
@@ -186,6 +220,7 @@ _NAV: tuple[tuple[str, str, str], ...] = (
     ("Audit", "log", "/audit"),
     ("Evaluation", "flask", "/evaluation"),
     ("Team details", "team", "/team"),
+    ("Connections", "link", "/connections"),
 )
 
 
@@ -1122,7 +1157,8 @@ def team_page(snap: Snapshot) -> Page:
         )
         rows.append(
             f"""<tr>
-  <td><span class="strong">{e(title_name(agent.name))}</span><div
+  <td><a class="row-link" href="/team/{e(agent.name)}"><span
+class="strong">{e(title_name(agent.name))}</span></a><div
 class="xs muted">{e(agent.role)}</div></td>
   <td class="sm">{e(agent.job)}
     <details class="more"><summary>{icon("chev", 12, "chev")}Instructions</summary><p
@@ -1177,6 +1213,251 @@ restarted dashboard can resume it. API keys are never shown.</p>
     return Page(200, layout(snap, title="Team details", current="Team details", content=content))
 
 
+_NOTICES = {
+    "connected": (
+        "Google Sheets is connected. Sam still uses demo data until you save connected mode."
+    ),
+    "denied": "The connection was not completed. No account was saved.",
+    "checked": "The connected account is active. Spreadsheet cells were not read.",
+    "unavailable": "The connected account is not available. Nothing was read.",
+    "disconnected": (
+        "Disconnect removed the local connection and Sam's assignment. "
+        "It does not revoke Google access. If Sam was in connected mode, account "
+        "answers fail until you save a window again or explicitly choose demo data."
+    ),
+    "assigned": (
+        "Sam is in connected mode. Account answers use the saved spreadsheet window. "
+        "A failed read does not return demo data."
+    ),
+    "demo": "Sam is in demo mode. Account answers use fixture account A-100.",
+    "window": (
+        "That range is larger than 100 rows, 26 columns, or 200 cells, or it is not "
+        "one sheet range. The saved assignment was not changed."
+    ),
+    "unassigned": (
+        "The spreadsheet window was removed. Connected mode does not return demo "
+        "data until you explicitly choose it."
+    ),
+    "unconfigured": (
+        "Composio is not configured on this server. Add COMPOSIO_API_KEY to the server "
+        "environment and install the composio extra. The key is not shown here."
+    ),
+    "exists": "A Google Sheets account is already connected. Disconnect it before another.",
+    "authconfig": (
+        "Connect stays off until COMPOSIO_GOOGLESHEETS_AUTH_CONFIG_ID names a custom "
+        "Google Sheets auth config. The managed Composio app is not used."
+    ),
+    "authscopes": (
+        "Sign-in was not started. The auth config must be a custom Google Sheets "
+        "configuration whose metadata requests only "
+        "https://www.googleapis.com/auth/spreadsheets.readonly."
+    ),
+    "authmeta": (
+        "Sign-in was not started. The auth config metadata did not include the "
+        "Google Sheets toolkit, whether the app is custom, or the requested scopes. "
+        "Those fields were not assumed."
+    ),
+}
+
+
+def connections_page(snap: Snapshot, query: Mapping[str, str]) -> Page:
+    notice = _notice(query.get("notice", ""))
+    rows = "".join(_connection_row(item) for item in snap.connections) or (
+        '<tr><td colspan="4" class="muted">No Google Sheets account is connected.</td></tr>'
+    )
+    if snap.composio_configured:
+        connect = (
+            '<form method="post" action="/connections/connect" '
+            'data-busy-label="Opening sign-in">'
+            '<button class="btn btn-primary" type="submit">Connect Google Sheets</button></form>'
+        )
+    elif snap.composio_package_missing:
+        connect = (
+            '<p class="sm muted">Connect stays off until the composio extra is installed '
+            'with <span class="mono">uv sync --extra composio</span>. The API key is '
+            "already configured.</p>"
+        )
+    elif snap.composio_auth_missing:
+        connect = (
+            '<p class="sm muted">Connect stays off until the server has '
+            "COMPOSIO_GOOGLESHEETS_AUTH_CONFIG_ID for a custom Google Sheets auth config "
+            "that requests only "
+            '<span class="mono">https://www.googleapis.com/auth/spreadsheets.readonly</span>. '
+            "Composio's managed Google app is not used.</p>"
+        )
+    else:
+        connect = (
+            '<p class="sm muted">Connect stays off until the server has a Composio API key.</p>'
+        )
+    content = f"""{notice}
+<header class="head"><div class="stack-xs"><h1>Connections</h1>
+<p class="muted">Connect one Google account, then save a spreadsheet and range on Sam's
+page. Demo mode stays available there and is labelled separately.</p></div>{connect}</header>
+<section class="card card-pad" aria-labelledby="scope-heading">
+  <h2 id="scope-heading">What a connection allows</h2>
+  <p class="sm">Sign-in opens Composio's hosted page and returns to this dashboard. This
+server then checks that the account belongs to this session. The only read is <span
+class="mono">GOOGLESHEETS_BATCH_GET</span>, pinned to toolkit version <span
+class="mono">20261101_00</span>. Sam's page saves the spreadsheet id and one range. The
+server rejects any other spreadsheet, any range outside that window, and every write.
+Connecting does not give every agent access.</p>
+  <p class="sm">The read this dashboard executes needs Google's spreadsheet read scope,
+<span class="mono">https://www.googleapis.com/auth/spreadsheets.readonly</span>.
+Connect uses the custom auth config named by the server. Before sign-in, the server
+reads that config's metadata and requires the Google Sheets toolkit and only that
+scope. If the toolkit, the custom-app flag, or the scope list is missing, sign-in
+does not start. Composio's managed Google app is not used. Restricting Sam's tools
+does not change the Google grant. The consent screen is still the list you approve.</p>
+  <p class="sm muted">Disconnect removes the local connection and Sam's assignment. It does
+not revoke Google access. Revoke that in your Google account or in Composio. API keys and
+OAuth tokens are not shown.</p>
+</section>
+<section class="card" aria-labelledby="accounts-heading">
+  <div class="card-head"><h2 id="accounts-heading">Google Sheets</h2></div>
+  <div class="table-scroll"><table>
+    <thead><tr><th scope="col">Account</th><th scope="col">Status</th><th scope="col">Assigned
+agents</th><th scope="col">Actions</th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table></div>
+</section>"""
+    return Page(200, layout(snap, title="Connections", current="Connections", content=content))
+
+
+def agent_page(snap: Snapshot, name: str, query: Mapping[str, str]) -> Page:
+    agent = next((item for item in snap.agents if item.name == name), None)
+    if agent is None:
+        return not_found(snap)
+    assignment = next((item for item in snap.assignments if item.agent_name == name), None)
+    notice = _notice(query.get("notice", ""))
+    demo_tools = tuple(tool for tool in agent.tools if tool != "read_sheet_range")
+    demo = (
+        " ".join(f'<code class="tool">{e(tool)}</code>' for tool in demo_tools)
+        if demo_tools
+        else '<span class="muted">None</span>'
+    )
+    if name != "sam":
+        connected = (
+            '<p class="sm">Connected spreadsheet mode is on Sam\'s page. This agent keeps '
+            "its demo tools.</p>"
+        )
+    else:
+        connected = _sam_connection(snap, assignment)
+    content = f"""{notice}
+<header class="head"><div class="stack-xs"><p class="muted"><a class="crumb"
+href="/team">{icon("back", 14)}Team details</a></p><h1>{e(title_name(name))}</h1>
+<p class="muted">{e(agent.job)}</p></div></header>
+<div class="grid-main">
+  <section class="card card-pad" aria-labelledby="demo-tools-heading">
+    <h2 id="demo-tools-heading">Demo mode</h2>
+    <p class="sm">These tools come from <span class="mono">team.json</span> and read fixture
+data, including account A-100. They answer only while this agent is in demo mode.
+Instructions are not edited here.</p>
+    <p>{demo}</p>
+  </section>
+  <section class="card card-pad" aria-labelledby="connected-heading">
+    <h2 id="connected-heading">Connected spreadsheet</h2>
+    {connected}
+  </section>
+</div>"""
+    return Page(
+        200,
+        layout(snap, title=title_name(name), current="Team details", content=content),
+    )
+
+
+def _sam_connection(snap: Snapshot, assignment: AssignmentInfo | None) -> str:
+    connected = snap.sam_mode == "connected" or (
+        assignment is not None and assignment.mode == "connected"
+    )
+    mode = "Connected spreadsheet" if connected else "Demo data"
+    missing = ""
+    if connected and assignment is None:
+        missing = (
+            '<p class="sm">The connected account is not available. Account answers '
+            "fail until you save a spreadsheet window or choose demo data.</p>"
+        )
+    window = ""
+    if assignment is not None:
+        window = (
+            f'<p class="sm">Saved window <span class="mono">{e(assignment.spreadsheet_id)}</span> '
+            f'<span class="mono">{e(assignment.cell_range)}</span> on '
+            f'<span class="strong">{e(assignment.label or "the connected account")}</span>.</p>'
+            """<form method="post" action="/connections/unassign">
+<input type="hidden" name="agent" value="sam">
+<button class="btn btn-secondary" type="submit">Remove assignment</button></form>"""
+        )
+    options = "".join(
+        _connection_option(item) for item in snap.connections if item.status == "ACTIVE"
+    )
+    spreadsheet = "" if assignment is None else assignment.spreadsheet_id
+    cell_range = "" if assignment is None else assignment.cell_range
+    demo_form = """<form method="post" action="/connections/assign">
+<input type="hidden" name="agent" value="sam"><input type="hidden" name="mode" value="demo">
+<button class="btn btn-secondary" type="submit">Use demo account A-100</button></form>"""
+    if not options:
+        form = '<p class="sm muted">Connect Google Sheets before saving a spreadsheet window.</p>'
+    else:
+        form = f"""<form method="post" action="/connections/assign" class="stack-s">
+<input type="hidden" name="agent" value="sam"><input type="hidden" name="mode" value="connected">
+<label for="spreadsheet_id">Spreadsheet ID</label>
+<input id="spreadsheet_id" name="spreadsheet_id" value="{e(spreadsheet)}" required>
+<label for="cell_range">Sheet and range</label>
+<input id="cell_range" name="cell_range" value="{e(cell_range)}" placeholder="Accounts!A1:B20"
+required>
+<label for="connection_id">Connected account</label>
+<select id="connection_id" name="connection_id" required>{options}</select>
+<p class="xs muted">At most 100 rows, 26 columns, and 200 cells. Sam's account answers
+use this window. A missing connection or a failed read does not return demo data.</p>
+<button class="btn btn-primary" type="submit">Use connected spreadsheet</button>
+</form>"""
+    return f"""<p class="sm">Current mode: <span class="strong">{e(mode)}</span>.</p>
+{missing}{window}
+<div class="stack-s">{form}{demo_form}</div>
+<p class="sm muted">Sheet values are untrusted data. They cannot grant tools or change
+instructions.</p>"""
+
+
+def _connection_row(item: ConnectionInfo) -> str:
+    agents = ", ".join(title_name(name) for name in item.agents) if item.agents else "Not assigned"
+    actions = ""
+    if item.status == "ACTIVE":
+        actions = f"""<div class="row-s"><form method="post" action="/connections/test">
+<input type="hidden" name="connection_id" value="{e(item.connection_id)}">
+<button class="btn btn-secondary" type="submit">Test connection</button></form>
+<form method="post" action="/connections/disconnect">
+<input type="hidden" name="connection_id" value="{e(item.connection_id)}">
+<button class="btn btn-secondary" type="submit">Disconnect</button></form></div>"""
+    return f"""<tr>
+  <td><span class="strong">{e(item.label)}</span><div class="xs muted">Google Sheets</div></td>
+  <td>{_connection_status(item.status)}</td>
+  <td class="sm">{e(agents)}</td>
+  <td>{actions}<p class="xs muted">Disconnect removes the local connection and assignments.
+It does not revoke Google access. Connected mode does not fall back to demo data.</p></td>
+</tr>"""
+
+
+def _connection_option(item: ConnectionInfo) -> str:
+    agents = ", ".join(title_name(name) for name in item.agents) or "no agents yet"
+    return f'<option value="{e(item.connection_id)}">{e(item.label)} ({e(agents)})</option>'
+
+
+def _connection_status(value: str) -> str:
+    if value == "ACTIVE":
+        return status("completed", "Connected")
+    if value == "DISCONNECTED":
+        return status("rejected", "Disconnected")
+    if value == "EXPIRED":
+        return status("failed", "Expired")
+    return status("failed", "Unavailable")
+
+
+def _notice(code: str) -> str:
+    text = _NOTICES.get(code, "")
+    if not text:
+        return ""
+    return f'<div class="note" role="status">{icon("info")}<p>{e(text)}</p></div>'
+
+
 # ---------------------------------------------------------------- routing
 
 
@@ -1207,4 +1488,8 @@ def render_page(snap: Snapshot, path: str, query: Mapping[str, str] | None = Non
         return evaluation_page(snap, params)
     if path == "/team":
         return team_page(snap)
+    if path.startswith("/team/"):
+        return agent_page(snap, path.removeprefix("/team/"), params)
+    if path == "/connections":
+        return connections_page(snap, params)
     return not_found(snap)

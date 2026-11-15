@@ -408,7 +408,10 @@ def test_static_files_are_allowlisted_and_pages_carry_headers() -> None:
     assert "Instrument Sans" in css
     assert css_type.startswith("text/css")
     assert font_type == "font/woff2"
+    port = binding.server_address[1]
     assert "script-src 'self'" in policy
+    assert f"form-action 'self' http://127.0.0.1:{port} http://localhost:{port} https:" in policy
+    assert "form-action *" not in policy
     assert "frame-ancestors 'none'" in policy
     assert nosniff == "nosniff"
     assert codes == [404, 404, 404]

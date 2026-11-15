@@ -31,6 +31,18 @@ class GithubSettings(TypedDict, total=False):
     private_key: SecretString | None
 
 
+class ComposioSettings(TypedDict, total=False):
+    """Composio settings loaded from the ``COMPOSIO_`` prefix.
+
+    ``api_key`` stays a ``SecretString``. The live client unwraps it only when
+    constructing the Composio SDK. ``googlesheets_auth_config_id`` names a
+    custom Google Sheets auth config. It is not a credential.
+    """
+
+    api_key: SecretString | None
+    googlesheets_auth_config_id: str | None
+
+
 class AppSettings(TypedDict, total=False):
     """Process settings loaded from the ``APP_`` prefix.
 
@@ -81,6 +93,20 @@ def load_github_settings(
     return load_settings(
         GithubSettings,
         env_prefix="GITHUB_",
+        env_file_path=env_file_path,
+        **overrides,
+    )
+
+
+def load_composio_settings(
+    *,
+    env_file_path: str | None = None,
+    **overrides: Any,
+) -> ComposioSettings:
+    """Load Composio settings. A missing key or auth config id stays unset."""
+    return load_settings(
+        ComposioSettings,
+        env_prefix="COMPOSIO_",
         env_file_path=env_file_path,
         **overrides,
     )

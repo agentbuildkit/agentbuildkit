@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 from agent_framework import SecretString
 
-from agentbuildkit.config import load_app_settings, load_openai_settings, redacted_settings
+from agentbuildkit.config import (
+    load_app_settings,
+    load_composio_settings,
+    load_openai_settings,
+    redacted_settings,
+)
 from agentbuildkit.runtime import build_runtime
 
 _OPENAI_KEYS = (
@@ -25,11 +30,15 @@ _APP_KEYS = (
     "APP_OTLP_ENDPOINT",
     "APP_STATE_DIRECTORY",
 )
+_COMPOSIO_KEYS = (
+    "COMPOSIO_API_KEY",
+    "COMPOSIO_GOOGLESHEETS_AUTH_CONFIG_ID",
+)
 
 
 @pytest.fixture(autouse=True)
 def _clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for key in (*_OPENAI_KEYS, *_APP_KEYS):
+    for key in (*_OPENAI_KEYS, *_APP_KEYS, *_COMPOSIO_KEYS):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -86,6 +95,27 @@ def test_runtime_loads_without_an_api_key() -> None:
 
     assert runtime.audit_log.events == []
     assert not hasattr(runtime, "openai_settings")
+
+
+def test_composio_auth_config_id_loads_without_becoming_a_secret(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "COMPOSIO_API_KEY=sk-test-secret",
+                "COMPOSIO_GOOGLESHEETS_AUTH_CONFIG_ID=ac_readonly_sheets",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_composio_settings(env_file_path=str(env_file))
+    secret = settings.get("api_key")
+
+    assert isinstance(secret, SecretString)
+    assert settings.get("googlesheets_auth_config_id") == "ac_readonly_sheets"
+    assert "sk-test-secret" not in str(redacted_settings(settings))
+    assert "ac_readonly_sheets" in str(redacted_settings(settings))
 
 
 def test_secret_values_are_masked(tmp_path: Path) -> None:

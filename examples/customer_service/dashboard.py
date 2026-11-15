@@ -5,6 +5,8 @@ by any path other than ``resume_service_action``.
 """
 
 import asyncio
+import re
+import secrets
 import threading
 import uuid
 from collections.abc import Callable, Coroutine, Mapping
@@ -15,6 +17,14 @@ from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
 from agentbuildkit.evaluation import EvaluationReport
+from agentbuildkit.integrations.composio import (
+    AUTH_CONFIG_MISSING,
+    AUTH_CONFIG_REJECTED,
+    AUTH_CONFIG_UNREADABLE,
+    ComposioError,
+    ComposioProviderError,
+    ComposioRejected,
+)
 from agentbuildkit.observability import AuditEvent
 from agentbuildkit.state.models import RegistryRejected, require_argument_hash
 from agentbuildkit.workflows import (
@@ -32,7 +42,14 @@ from customer_service.dashboard_model import (
     build_runs,
     merge_audit,
 )
-from customer_service.dashboard_view import AgentInfo, Page, Snapshot, render_page
+from customer_service.dashboard_view import (
+    AgentInfo,
+    AssignmentInfo,
+    ConnectionInfo,
+    Page,
+    Snapshot,
+    render_page,
+)
 from customer_service.evaluation import run_organisation_evaluation
 from customer_service.models import CustomerRequest, FinalOutcome
 from customer_service.recovery import ActionRecovery, MemoryActionRecovery
@@ -41,6 +58,7 @@ from customer_service.service import (
     handle_request,
     resume_service_action,
 )
+from customer_service.sheets import SheetDesk
 from customer_service.team import Organisation, customer_team_bundle
 
 Evaluate = Callable[[], Coroutine[Any, Any, EvaluationReport]]
@@ -78,15 +96,26 @@ _STATIC_TYPES: dict[str, str] = {
     "fonts/geist-mono-latin-400-normal.woff2": "font/woff2",
     "fonts/geist-mono-latin-500-normal.woff2": "font/woff2",
 }
-_SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
-    (
-        "Content-Security-Policy",
+
+
+def _security_headers(port: int) -> tuple[tuple[str, str], ...]:
+    """Headers for one response.
+
+    Chrome applies ``form-action`` to the redirect that follows a form post, and
+    its console message names the form address rather than the blocked redirect.
+    Connect answers with the hosted sign-in page, so https redirects are allowed.
+    Posts to any other http host stay blocked.
+    """
+    forms = f"http://127.0.0.1:{port} http://localhost:{port} https:"
+    policy = (
         "default-src 'none'; style-src 'self'; script-src 'self'; font-src 'self'; "
-        "img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-    ),
-    ("X-Content-Type-Options", "nosniff"),
-    ("Referrer-Policy", "no-referrer"),
-)
+        f"img-src 'self'; form-action 'self' {forms}; base-uri 'none'; frame-ancestors 'none'"
+    )
+    return (
+        ("Content-Security-Policy", policy),
+        ("X-Content-Type-Options", "nosniff"),
+        ("Referrer-Policy", "no-referrer"),
+    )
 
 
 class DashboardService:
@@ -99,9 +128,11 @@ class DashboardService:
         *,
         recovery: ActionRecovery | None = None,
         evaluate: Evaluate | None = None,
+        sheets: SheetDesk | None = None,
     ) -> None:
         self.organisation = organisation
         self.store = store
+        self.sheets = sheets
         self.recovery = recovery or MemoryActionRecovery()
         self.report: EvaluationReport | None = None
         self.error = ""
@@ -261,6 +292,14 @@ class DashboardService:
             error=self.error,
             draft=self.draft,
             persistent=self.persistent,
+            connections=self._connections(),
+            assignments=self._assignments(),
+            composio_configured=self.sheets is not None and self.sheets.connect_ready,
+            composio_auth_missing=(
+                self.sheets is not None and self.sheets.configured and not self.sheets.connect_ready
+            ),
+            composio_package_missing=self.sheets is not None and self.sheets.package_missing,
+            sam_mode="demo" if self.sheets is None else self.sheets.store.data_mode("sam"),
         )
 
     def page(self, path: str = "/", query: Mapping[str, str] | None = None) -> Page:
@@ -270,6 +309,138 @@ class DashboardService:
     def render(self, path: str = "/", query: Mapping[str, str] | None = None) -> str:
         """Render one page. Secrets are not included."""
         return self.page(path, query).body
+
+    def prepare_sign_in(self, session_token: str, callback_url: str) -> tuple[str, str]:
+        """Reserve a callback on the owner thread. Composio is not called."""
+        if self.sheets is None:
+            return "", "unconfigured"
+        try:
+            return self.sheets.prepare(session_token=session_token, callback_url=callback_url), ""
+        except ComposioProviderError:
+            return "", "unavailable"
+        except ComposioError as exc:
+            return "", _connection_notice(exc)
+
+    def request_sign_in(self, user_id: str, callback_url: str) -> tuple[str, str]:
+        """Fetch the hosted URL. Call this off the database owner thread."""
+        if self.sheets is None:
+            return "", "unconfigured"
+        try:
+            return self.sheets.sign_in(user_id=user_id, callback_url=callback_url), ""
+        except ComposioProviderError:
+            return "", "unavailable"
+        except ComposioError as exc:
+            return "", _connection_notice(exc)
+
+    def start_connection(self, session_token: str, callback_url: str) -> tuple[str, str]:
+        """Begin hosted sign-in. The redirect is empty when the link was not started."""
+        if self.sheets is None:
+            return "", "unconfigured"
+        try:
+            return self.sheets.begin(session_token=session_token, callback_url=callback_url), ""
+        except ComposioProviderError:
+            return "", "unavailable"
+        except ComposioError as exc:
+            return "", _connection_notice(exc)
+
+    def finish_connection(self, session_token: str, state: str, account_id: str) -> str:
+        """Validate the hosted return and save the account, or refuse it."""
+        if self.sheets is None:
+            return "unconfigured"
+        try:
+            self.sheets.complete(session_token=session_token, state=state, account_id=account_id)
+        except ComposioProviderError:
+            return "unavailable"
+        except ComposioError:
+            return "denied"
+        return "connected"
+
+    def test_connection(self, connection_id: str) -> str:
+        """Confirm one saved account is active. Cell values are not read."""
+        if self.sheets is None:
+            return "unconfigured"
+        try:
+            self.sheets.test(connection_id)
+        except ComposioError:
+            return "unavailable"
+        return "checked"
+
+    def disconnect_connection(self, connection_id: str) -> str:
+        if self.sheets is None:
+            return "unconfigured"
+        try:
+            self.sheets.disconnect(connection_id)
+        except ComposioError:
+            return "denied"
+        return "disconnected"
+
+    def assign_connection(
+        self,
+        agent_name: str,
+        connection_id: str,
+        spreadsheet_id: str,
+        cell_range: str,
+        mode: str,
+    ) -> str:
+        if self.sheets is None or agent_name != "sam":
+            return "denied"
+        try:
+            self.sheets.assign(
+                agent_name,
+                connection_id,
+                spreadsheet_id,
+                cell_range,
+                mode=mode,
+            )
+        except ComposioRejected as exc:
+            if str(exc) == "The read arguments are not allowed.":
+                return "window"
+            return "denied"
+        except ComposioError:
+            return "denied"
+        return "demo" if mode == "demo" else "assigned"
+
+    def unassign_connection(self, agent_name: str) -> str:
+        if self.sheets is None or agent_name not in ROLES:
+            return "denied"
+        self.sheets.unassign(agent_name)
+        return "unassigned"
+
+    def _connections(self) -> tuple[ConnectionInfo, ...]:
+        if self.sheets is None:
+            return ()
+        assigned = self.sheets.store.assignments()
+        return tuple(
+            ConnectionInfo(
+                connection_id=item.connection_id,
+                label=item.label,
+                status=item.status,
+                agents=tuple(
+                    row.agent_name for row in assigned if row.connection_id == item.connection_id
+                ),
+            )
+            for item in self.sheets.store.connections()
+        )
+
+    def _assignments(self) -> tuple[AssignmentInfo, ...]:
+        if self.sheets is None:
+            return ()
+        by_id = {item.connection_id: item for item in self.sheets.store.connections()}
+        views: list[AssignmentInfo] = []
+        for row in self.sheets.store.assignments():
+            connection = by_id.get(row.connection_id)
+            views.append(
+                AssignmentInfo(
+                    agent_name=row.agent_name,
+                    connection_id=row.connection_id,
+                    label="" if connection is None else connection.label,
+                    tools=row.tools,
+                    spreadsheet_id=row.spreadsheet_id,
+                    cell_range=row.cell_range,
+                    mode=row.mode,
+                )
+            )
+        return tuple(views)
 
     def decision_target(self, request_id: str) -> str:
         """Where the page goes after a decision: the run, or the approvals list."""
@@ -412,11 +583,16 @@ def serve(
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
+            self._new_cookie: str | None = None
             parts = urlsplit(self.path)
             if parts.path.startswith("/static/"):
                 self._static(parts.path.removeprefix("/static/"))
                 return
             query = {key: values[0] for key, values in parse_qs(parts.query).items() if values}
+            if parts.path == "/connections/callback":
+                notice = self._finish(query)
+                self._redirect(f"/connections?notice={notice}")
+                return
             rendered = page(parts.path, query)
             self._send(
                 rendered.status,
@@ -426,6 +602,7 @@ def serve(
             )
 
         def do_POST(self) -> None:
+            self._new_cookie = None
             length = int(self.headers.get("Content-Length", "0"))
             fields = parse_qs(self.rfile.read(length).decode())
             path = urlsplit(self.path).path
@@ -448,15 +625,100 @@ def serve(
             elif path == "/evaluate":
                 invoke(service.run_evaluation())
                 location = "/evaluation"
+            elif path == "/connections/connect":
+                location = self._connect()
+            elif path == "/connections/test":
+                notice = cast(
+                    str,
+                    on_owner(lambda: service.test_connection(_field(fields, "connection_id"))),
+                )
+                location = _notice_path("/connections", notice)
+            elif path == "/connections/disconnect":
+                notice = cast(
+                    str,
+                    on_owner(
+                        lambda: service.disconnect_connection(_field(fields, "connection_id"))
+                    ),
+                )
+                location = _notice_path("/connections", notice)
+            elif path == "/connections/assign":
+                agent = _field(fields, "agent")
+                connection_id = _field(fields, "connection_id")
+                spreadsheet_id = _field(fields, "spreadsheet_id")
+                cell_range = _field(fields, "cell_range")
+                mode = _field(fields, "mode")
+                notice = cast(
+                    str,
+                    on_owner(
+                        lambda: service.assign_connection(
+                            agent, connection_id, spreadsheet_id, cell_range, mode
+                        )
+                    ),
+                )
+                target = f"/team/{agent}" if agent in ROLES else "/team"
+                location = _notice_path(target, notice)
+            elif path == "/connections/unassign":
+                agent = _field(fields, "agent")
+                notice = cast(str, on_owner(lambda: service.unassign_connection(agent)))
+                target = f"/team/{agent}" if agent in ROLES else "/team"
+                location = _notice_path(target, notice)
             else:
                 rendered = page("/404", {})
                 self._send(
                     404, rendered.body.encode(), "text/html; charset=utf-8", cache="no-store"
                 )
                 return
+            self._redirect(location)
+
+        def _connect(self) -> str:
+            token = self._session()
+            address = cast(tuple[str, int], self.server.server_address)
+            host = "127.0.0.1" if address[0] in {"0.0.0.0", "::"} else address[0]
+            state = secrets.token_urlsafe(32)
+            callback = f"http://{host}:{address[1]}/connections/callback?state={state}"
+            user_id, notice = cast(
+                tuple[str, str],
+                on_owner(lambda: service.prepare_sign_in(token, callback)),
+            )
+            if user_id:
+                redirect, notice = service.request_sign_in(user_id, callback)
+            else:
+                redirect = ""
+            if redirect.startswith("https://") and "\n" not in redirect and "\r" not in redirect:
+                return redirect
+            return _notice_path("/connections", notice or "denied")
+
+        def _finish(self, query: dict[str, str]) -> str:
+            token = self._session()
+            notice = cast(
+                str,
+                on_owner(
+                    lambda: service.finish_connection(
+                        token,
+                        query.get("state", ""),
+                        query.get("connected_account_id", ""),
+                    )
+                ),
+            )
+            return notice if notice in _NOTICE_CODES else "denied"
+
+        def _session(self) -> str:
+            raw = self.headers.get("Cookie")
+            if raw:
+                for part in raw.split(";"):
+                    key, _, value = part.strip().partition("=")
+                    if key == _SESSION_COOKIE and _SESSION.fullmatch(value):
+                        return value
+            if self._new_cookie is None:
+                self._new_cookie = secrets.token_urlsafe(32)
+            return self._new_cookie
+
+        def _redirect(self, location: str) -> None:
             self.send_response(303)
             self.send_header("Location", location)
             self.send_header("Content-Length", "0")
+            self._cookie()
+            self._security()
             self.end_headers()
 
         def _static(self, name: str) -> None:
@@ -472,10 +734,24 @@ def serve(
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", cache)
-            for name, value in _SECURITY_HEADERS:
-                self.send_header(name, value)
+            self._cookie()
+            self._security()
             self.end_headers()
             self.wfile.write(body)
+
+        def _security(self) -> None:
+            address = cast(tuple[str, int], self.server.server_address)
+            for name, value in _security_headers(address[1]):
+                self.send_header(name, value)
+
+        def _cookie(self) -> None:
+            token = getattr(self, "_new_cookie", None)
+            if not isinstance(token, str):
+                return
+            self.send_header(
+                "Set-Cookie",
+                f"{_SESSION_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400",
+            )
 
         def log_message(self, format: str, *args: object) -> None:
             del format, args
@@ -492,30 +768,53 @@ def main() -> None:
 
     from agent_framework import SecretString
 
+    from agentbuildkit.config import load_composio_settings
+    from agentbuildkit.integrations.composio import ComposioUnavailable, LiveComposioGateway
     from agentbuildkit.observability import AuditLog
     from customer_service.cli import open_workflow_store, state_directory
+    from customer_service.connections import MemoryConnectionStore, SqliteConnectionStore
     from customer_service.evaluation import LOCAL_MOCK_TOKEN
     from customer_service.recovery import SqliteActionRecovery
+    from customer_service.sheets import SheetDesk
     from customer_service.team import ORGANISATION_SCOPE, build_team, production_clients
 
     env_file = Path.cwd() / ".env"
+    env_path = str(env_file) if env_file.is_file() else None
 
     def open_dashboard() -> DashboardService:
-        clients = production_clients(env_file_path=str(env_file) if env_file.is_file() else None)
+        clients = production_clients(env_file_path=env_path)
         audit_log = AuditLog()
+        directory = state_directory(env_file if env_file.is_file() else None)
+        connections = (
+            SqliteConnectionStore(Path(directory) / "connections.sqlite")
+            if directory is not None
+            else MemoryConnectionStore()
+        )
+        composio = load_composio_settings(env_file_path=env_path)
+        composio_key = composio.get("api_key")
+        auth_config_id = composio.get("googlesheets_auth_config_id") or ""
+        gateway = None
+        package_missing = False
+        if composio_key is not None:
+            try:
+                gateway = LiveComposioGateway(composio_key, auth_config_id=auth_config_id)
+            except ComposioUnavailable:
+                package_missing = True
+        desk = SheetDesk(connections, gateway, package_missing=package_missing)
         organisation = build_team(
             clients=clients,
             api_token=SecretString(LOCAL_MOCK_TOKEN),
             audit_log=audit_log,
+            connected_reads=desk.tools_for,
+            account_guard=desk.guard_account,
         )
-        directory = state_directory(env_file if env_file.is_file() else None)
         store = open_workflow_store(audit_log, directory)
         recovery = None
         if directory is not None:
             recovery = SqliteActionRecovery(Path(directory) / "action-recovery.sqlite")
         if store.scope != ORGANISATION_SCOPE:
             raise RuntimeError("The dashboard store scope does not match the team.")
-        return DashboardService(organisation, store, recovery=recovery)
+        return DashboardService(organisation, store, recovery=recovery, sheets=desk)
 
     binding = serve(open_dashboard)
     address = binding.server_address
@@ -536,6 +835,8 @@ async def _close_service(service: DashboardService) -> None:
     finally:
         service.store.close()
         service.recovery.close()
+        if service.sheets is not None:
+            service.sheets.store.close()
 
 
 class _LedgerSink:
@@ -611,6 +912,54 @@ def _same_outcome(outcomes: list[FinalOutcome], outcome: FinalOutcome) -> bool:
 def _field(fields: dict[str, list[str]], name: str) -> str:
     values = fields.get(name, [])
     return values[0] if values else ""
+
+
+_NOTICE_CODES = frozenset(
+    {
+        "connected",
+        "denied",
+        "checked",
+        "unavailable",
+        "disconnected",
+        "assigned",
+        "demo",
+        "window",
+        "unassigned",
+        "unconfigured",
+        "exists",
+        "authconfig",
+        "authscopes",
+        "authmeta",
+    }
+)
+
+
+def _notice_path(path: str, notice: str) -> str:
+    code = notice if notice in _NOTICE_CODES else "denied"
+    return f"{path}?notice={code}"
+
+
+def _connection_notice(exc: ComposioError) -> str:
+    text = str(exc)
+    if text == "Composio is not configured on this server.":
+        return "unconfigured"
+    if text == AUTH_CONFIG_MISSING:
+        return "authconfig"
+    if text == AUTH_CONFIG_REJECTED:
+        return "authscopes"
+    if text == AUTH_CONFIG_UNREADABLE or text.startswith(
+        "The auth config metadata did not include "
+    ):
+        return "authmeta"
+    if text == "A Google Sheets account is already connected.":
+        return "exists"
+    if text == "The connected account is not available.":
+        return "unavailable"
+    return "denied"
+
+
+_SESSION_COOKIE = "abk_session"
+_SESSION = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 
 
 if __name__ == "__main__":
