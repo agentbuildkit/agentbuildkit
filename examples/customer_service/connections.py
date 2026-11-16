@@ -1,21 +1,32 @@
 """Local Google Sheets connection references.
 
-The file stores account ids, status, and which agent may use which read.
+The file stores account ids, status, and which team and agent may use which read.
 It does not store API keys, OAuth tokens, or spreadsheet cell values.
+
+One local operator can list every connection. Permission to read still requires
+an assignment for that team and agent. This is team isolation for one operator,
+not hosted multi-user tenancy.
+
+Rows saved before team ids existed belong to ``customer-service``. Opening the
+database copies it to a backup file and then adds the team id. It does not
+delete the database.
 """
 
 import hashlib
 import hmac
 import json
+import shutil
 import sqlite3
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol, cast
 
 _ACTIVE = "ACTIVE"
 _DISCONNECTED = "DISCONNECTED"
+LEGACY_TEAM_ID = "customer-service"
 
 
 @dataclass(frozen=True)
@@ -32,8 +43,9 @@ class StoredConnection:
 
 @dataclass(frozen=True)
 class StoredAssignment:
-    """One agent's saved spreadsheet window and data mode."""
+    """One team's saved spreadsheet window for one agent."""
 
+    team_id: str
     agent_name: str
     connection_id: str
     tools: tuple[str, ...]
@@ -63,6 +75,7 @@ class ConnectionStore(Protocol):
 
     def assign(
         self,
+        team_id: str,
         agent_name: str,
         connection_id: str,
         tools: Sequence[str],
@@ -71,15 +84,15 @@ class ConnectionStore(Protocol):
         mode: str,
     ) -> None: ...
 
-    def unassign(self, agent_name: str) -> None: ...
+    def unassign(self, team_id: str, agent_name: str) -> None: ...
 
-    def assignment(self, agent_name: str) -> StoredAssignment | None: ...
+    def assignment(self, team_id: str, agent_name: str) -> StoredAssignment | None: ...
 
-    def assignments(self) -> tuple[StoredAssignment, ...]: ...
+    def assignments(self, team_id: str | None = None) -> tuple[StoredAssignment, ...]: ...
 
-    def data_mode(self, agent_name: str) -> str: ...
+    def data_mode(self, team_id: str, agent_name: str) -> str: ...
 
-    def set_data_mode(self, agent_name: str, mode: str) -> None: ...
+    def set_data_mode(self, team_id: str, agent_name: str, mode: str) -> None: ...
 
     def close(self) -> None: ...
 
@@ -91,8 +104,8 @@ class MemoryConnectionStore:
         self._operator = uuid.uuid4().hex
         self._links: dict[str, tuple[str, str]] = {}
         self._connections: dict[str, StoredConnection] = {}
-        self._assignments: dict[str, StoredAssignment] = {}
-        self._modes: dict[str, str] = {}
+        self._assignments: dict[tuple[str, str], StoredAssignment] = {}
+        self._modes: dict[tuple[str, str], str] = {}
 
     def operator_id(self) -> str:
         return self._operator
@@ -132,13 +145,14 @@ class MemoryConnectionStore:
     def disconnect(self, connection_id: str) -> None:
         self.mark(connection_id, _DISCONNECTED)
         self._assignments = {
-            name: item
-            for name, item in self._assignments.items()
+            key: item
+            for key, item in self._assignments.items()
             if item.connection_id != connection_id
         }
 
     def assign(
         self,
+        team_id: str,
         agent_name: str,
         connection_id: str,
         tools: Sequence[str],
@@ -146,7 +160,8 @@ class MemoryConnectionStore:
         cell_range: str,
         mode: str,
     ) -> None:
-        self._assignments[agent_name] = StoredAssignment(
+        self._assignments[(team_id, agent_name)] = StoredAssignment(
+            team_id=team_id,
             agent_name=agent_name,
             connection_id=connection_id,
             tools=tuple(tools),
@@ -155,20 +170,23 @@ class MemoryConnectionStore:
             mode=mode,
         )
 
-    def unassign(self, agent_name: str) -> None:
-        self._assignments.pop(agent_name, None)
+    def unassign(self, team_id: str, agent_name: str) -> None:
+        self._assignments.pop((team_id, agent_name), None)
 
-    def assignment(self, agent_name: str) -> StoredAssignment | None:
-        return self._assignments.get(agent_name)
+    def assignment(self, team_id: str, agent_name: str) -> StoredAssignment | None:
+        return self._assignments.get((team_id, agent_name))
 
-    def assignments(self) -> tuple[StoredAssignment, ...]:
-        return tuple(self._assignments.values())
+    def assignments(self, team_id: str | None = None) -> tuple[StoredAssignment, ...]:
+        rows = self._assignments.values()
+        if team_id is None:
+            return tuple(rows)
+        return tuple(item for item in rows if item.team_id == team_id)
 
-    def data_mode(self, agent_name: str) -> str:
-        return self._modes.get(agent_name, "demo")
+    def data_mode(self, team_id: str, agent_name: str) -> str:
+        return self._modes.get((team_id, agent_name), "demo")
 
-    def set_data_mode(self, agent_name: str, mode: str) -> None:
-        self._modes[agent_name] = mode
+    def set_data_mode(self, team_id: str, agent_name: str, mode: str) -> None:
+        self._modes[(team_id, agent_name)] = mode
 
     def close(self) -> None:
         """Memory storage has no database connection."""
@@ -179,9 +197,14 @@ class SqliteConnectionStore:
 
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        self._path = path
         self._connection = sqlite3.connect(path)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA journal_mode=WAL")
+        self._prepare()
+        self._connection.commit()
+
+    def _prepare(self) -> None:
         self._connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS meta (
@@ -202,21 +225,111 @@ class SqliteConnectionStore:
                 status TEXT NOT NULL,
                 label TEXT NOT NULL
             );
+            """
+        )
+        if not _table_exists(self._connection, "assignments"):
+            self._create_scoped_tables()
+            return
+        self._ensure_assignment_columns()
+        if _has_column(self._connection, "assignments", "team_id"):
+            return
+        self._migrate_legacy_assignments()
+
+    def _create_scoped_tables(self) -> None:
+        self._connection.executescript(
+            """
             CREATE TABLE IF NOT EXISTS assignments (
-                agent_name TEXT PRIMARY KEY,
+                team_id TEXT NOT NULL,
+                agent_name TEXT NOT NULL,
                 connection_id TEXT NOT NULL,
                 tools_json TEXT NOT NULL,
                 spreadsheet_id TEXT NOT NULL DEFAULT '',
                 cell_range TEXT NOT NULL DEFAULT '',
-                mode TEXT NOT NULL DEFAULT 'demo'
+                mode TEXT NOT NULL DEFAULT 'demo',
+                PRIMARY KEY (team_id, agent_name)
             );
             CREATE TABLE IF NOT EXISTS agent_modes (
-                agent_name TEXT PRIMARY KEY,
-                mode TEXT NOT NULL
+                team_id TEXT NOT NULL,
+                agent_name TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                PRIMARY KEY (team_id, agent_name)
             );
             """
         )
-        self._ensure_assignment_columns()
+
+    def _migrate_legacy_assignments(self) -> None:
+        """Copy the database, then attach existing rows to the original team.
+
+        The copy is the backup. The open database is rewritten in place and is
+        not deleted.
+        """
+        self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self._connection.commit()
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        backup = self._path.with_name(f"{self._path.name}.bak-{stamp}")
+        shutil.copy2(self._path, backup)
+        self._connection.execute("BEGIN")
+        self._connection.execute(
+            """
+            CREATE TABLE assignments_next (
+                team_id TEXT NOT NULL,
+                agent_name TEXT NOT NULL,
+                connection_id TEXT NOT NULL,
+                tools_json TEXT NOT NULL,
+                spreadsheet_id TEXT NOT NULL DEFAULT '',
+                cell_range TEXT NOT NULL DEFAULT '',
+                mode TEXT NOT NULL DEFAULT 'demo',
+                PRIMARY KEY (team_id, agent_name)
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            INSERT INTO assignments_next (
+                team_id, agent_name, connection_id, tools_json,
+                spreadsheet_id, cell_range, mode
+            )
+            SELECT ?, agent_name, connection_id, tools_json,
+                spreadsheet_id, cell_range, mode
+            FROM assignments
+            """,
+            (LEGACY_TEAM_ID,),
+        )
+        self._connection.execute("DROP TABLE assignments")
+        self._connection.execute("ALTER TABLE assignments_next RENAME TO assignments")
+        if _table_exists(self._connection, "agent_modes") and not _has_column(
+            self._connection, "agent_modes", "team_id"
+        ):
+            self._connection.execute(
+                """
+                CREATE TABLE agent_modes_next (
+                    team_id TEXT NOT NULL,
+                    agent_name TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    PRIMARY KEY (team_id, agent_name)
+                )
+                """
+            )
+            self._connection.execute(
+                """
+                INSERT INTO agent_modes_next (team_id, agent_name, mode)
+                SELECT ?, agent_name, mode FROM agent_modes
+                """,
+                (LEGACY_TEAM_ID,),
+            )
+            self._connection.execute("DROP TABLE agent_modes")
+            self._connection.execute("ALTER TABLE agent_modes_next RENAME TO agent_modes")
+        elif not _table_exists(self._connection, "agent_modes"):
+            self._connection.execute(
+                """
+                CREATE TABLE agent_modes (
+                    team_id TEXT NOT NULL,
+                    agent_name TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    PRIMARY KEY (team_id, agent_name)
+                )
+                """
+            )
         self._connection.commit()
 
     def operator_id(self) -> str:
@@ -316,6 +429,7 @@ class SqliteConnectionStore:
 
     def assign(
         self,
+        team_id: str,
         agent_name: str,
         connection_id: str,
         tools: Sequence[str],
@@ -326,62 +440,86 @@ class SqliteConnectionStore:
         self._connection.execute(
             """
             INSERT INTO assignments (
-                agent_name, connection_id, tools_json, spreadsheet_id, cell_range, mode
+                team_id, agent_name, connection_id, tools_json,
+                spreadsheet_id, cell_range, mode
             )
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(agent_name) DO UPDATE SET
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(team_id, agent_name) DO UPDATE SET
                 connection_id = excluded.connection_id,
                 tools_json = excluded.tools_json,
                 spreadsheet_id = excluded.spreadsheet_id,
                 cell_range = excluded.cell_range,
                 mode = excluded.mode
             """,
-            (agent_name, connection_id, json.dumps(list(tools)), spreadsheet_id, cell_range, mode),
+            (
+                team_id,
+                agent_name,
+                connection_id,
+                json.dumps(list(tools)),
+                spreadsheet_id,
+                cell_range,
+                mode,
+            ),
         )
         self._connection.commit()
 
-    def unassign(self, agent_name: str) -> None:
-        self._connection.execute("DELETE FROM assignments WHERE agent_name = ?", (agent_name,))
+    def unassign(self, team_id: str, agent_name: str) -> None:
+        self._connection.execute(
+            "DELETE FROM assignments WHERE team_id = ? AND agent_name = ?",
+            (team_id, agent_name),
+        )
         self._connection.commit()
 
-    def assignment(self, agent_name: str) -> StoredAssignment | None:
+    def assignment(self, team_id: str, agent_name: str) -> StoredAssignment | None:
         row = self._connection.execute(
             """
-            SELECT agent_name, connection_id, tools_json, spreadsheet_id, cell_range, mode
-            FROM assignments WHERE agent_name = ?
+            SELECT team_id, agent_name, connection_id, tools_json,
+                spreadsheet_id, cell_range, mode
+            FROM assignments WHERE team_id = ? AND agent_name = ?
             """,
-            (agent_name,),
+            (team_id, agent_name),
         ).fetchone()
         if row is None:
             return None
         return _assignment_row(row)
 
-    def assignments(self) -> tuple[StoredAssignment, ...]:
-        rows = self._connection.execute(
-            """
-            SELECT agent_name, connection_id, tools_json, spreadsheet_id, cell_range, mode
-            FROM assignments ORDER BY agent_name
-            """
-        ).fetchall()
+    def assignments(self, team_id: str | None = None) -> tuple[StoredAssignment, ...]:
+        if team_id is None:
+            rows = self._connection.execute(
+                """
+                SELECT team_id, agent_name, connection_id, tools_json,
+                    spreadsheet_id, cell_range, mode
+                FROM assignments ORDER BY team_id, agent_name
+                """
+            ).fetchall()
+        else:
+            rows = self._connection.execute(
+                """
+                SELECT team_id, agent_name, connection_id, tools_json,
+                    spreadsheet_id, cell_range, mode
+                FROM assignments WHERE team_id = ? ORDER BY agent_name
+                """,
+                (team_id,),
+            ).fetchall()
         return tuple(_assignment_row(row) for row in rows)
 
-    def data_mode(self, agent_name: str) -> str:
+    def data_mode(self, team_id: str, agent_name: str) -> str:
         row = self._connection.execute(
-            "SELECT mode FROM agent_modes WHERE agent_name = ?",
-            (agent_name,),
+            "SELECT mode FROM agent_modes WHERE team_id = ? AND agent_name = ?",
+            (team_id, agent_name),
         ).fetchone()
         if row is None:
             return "demo"
         return str(row["mode"])
 
-    def set_data_mode(self, agent_name: str, mode: str) -> None:
+    def set_data_mode(self, team_id: str, agent_name: str, mode: str) -> None:
         self._connection.execute(
             """
-            INSERT INTO agent_modes (agent_name, mode)
-            VALUES (?, ?)
-            ON CONFLICT(agent_name) DO UPDATE SET mode = excluded.mode
+            INSERT INTO agent_modes (team_id, agent_name, mode)
+            VALUES (?, ?, ?)
+            ON CONFLICT(team_id, agent_name) DO UPDATE SET mode = excluded.mode
             """,
-            (agent_name, mode),
+            (team_id, agent_name, mode),
         )
         self._connection.commit()
 
@@ -437,6 +575,7 @@ def _assignment_row(row: Mapping[str, object]) -> StoredAssignment:
         tools = tuple(item for item in values if isinstance(item, str))
     columns = set(row.keys())
     return StoredAssignment(
+        team_id=str(row["team_id"]) if "team_id" in columns else LEGACY_TEAM_ID,
         agent_name=str(row["agent_name"]),
         connection_id=str(row["connection_id"]),
         tools=tools,
@@ -444,3 +583,16 @@ def _assignment_row(row: Mapping[str, object]) -> StoredAssignment:
         cell_range=str(row["cell_range"]) if "cell_range" in columns else "",
         mode=str(row["mode"]) if "mode" in columns else "demo",
     )
+
+
+def _table_exists(connection: sqlite3.Connection, name: str) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (name,),
+    ).fetchone()
+    return row is not None
+
+
+def _has_column(connection: sqlite3.Connection, table: str, column: str) -> bool:
+    found = {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
+    return column in found

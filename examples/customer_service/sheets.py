@@ -27,6 +27,7 @@ from agentbuildkit.integrations.composio import (
 )
 from customer_service.business import BusinessSystem
 from customer_service.connections import (
+    LEGACY_TEAM_ID,
     ConnectionStore,
     StoredAssignment,
     StoredConnection,
@@ -130,10 +131,16 @@ class SheetDesk:
         gateway: ComposioGateway | None,
         *,
         package_missing: bool = False,
+        team_id: str = LEGACY_TEAM_ID,
+        agent_name: str = SAM,
+        tool_name: str = READ_TOOL,
     ) -> None:
         self.store = store
         self.gateway = gateway
         self.package_missing = package_missing
+        self.team_id = team_id
+        self.agent_name = agent_name
+        self.tool_name = tool_name
 
     @property
     def configured(self) -> bool:
@@ -163,10 +170,10 @@ class SheetDesk:
 
         async def read_account(reference: str) -> str:
             """Read the customer account from the mode saved for Sam."""
-            if not self.uses_sheet(SAM):
+            if not self.uses_sheet(self.agent_name):
                 return await business.demo_account(reference)
-            assignment = self.store.assignment(SAM)
-            if assignment is None or not self.is_connected(SAM):
+            assignment = self.store.assignment(self.team_id, self.agent_name)
+            if assignment is None or not self.is_connected(self.agent_name):
                 raise ComposioRejected("The connected account is not available.")
             if _SHEET_ID.fullmatch(reference) and reference != assignment.spreadsheet_id:
                 raise ComposioRejected("That spreadsheet is not assigned.")
@@ -263,14 +270,15 @@ class SheetDesk:
         mode: str,
     ) -> None:
         """Save Sam's spreadsheet window, or switch Sam back to demo data."""
-        if agent_name != SAM:
-            raise ComposioRejected("Only Sam can use the connected spreadsheet.")
+        if agent_name != self.agent_name:
+            raise ComposioRejected("Only the assigned agent can use the connected spreadsheet.")
         if mode == DEMO:
-            self.store.set_data_mode(agent_name, DEMO)
-            current = self.store.assignment(agent_name)
+            self.store.set_data_mode(self.team_id, agent_name, DEMO)
+            current = self.store.assignment(self.team_id, agent_name)
             if current is None:
                 return
             self.store.assign(
+                self.team_id,
                 agent_name,
                 current.connection_id,
                 current.tools,
@@ -285,40 +293,45 @@ class SheetDesk:
         sheet = spreadsheet_id(spreadsheet_id_or_url)
         self._active(connection_id)
         self.store.assign(
+            self.team_id,
             agent_name,
             connection_id,
-            (READ_TOOL,),
+            (self.tool_name,),
             sheet,
             window.text,
             CONNECTED,
         )
-        self.store.set_data_mode(agent_name, CONNECTED)
+        self.store.set_data_mode(self.team_id, agent_name, CONNECTED)
 
     def unassign(self, agent_name: str) -> None:
-        self.store.unassign(agent_name)
+        self.store.unassign(self.team_id, agent_name)
 
     def is_connected(self, agent_name: str) -> bool:
-        assignment = self.store.assignment(agent_name)
-        return assignment is not None and _connected(assignment)
+        assignment = self.store.assignment(self.team_id, agent_name)
+        return assignment is not None and _connected(self, assignment)
 
     def uses_sheet(self, agent_name: str) -> bool:
         """True when account answers must come from the spreadsheet."""
-        if self.store.data_mode(agent_name) == CONNECTED:
+        if self.store.data_mode(self.team_id, agent_name) == CONNECTED:
             return True
-        assignment = self.store.assignment(agent_name)
+        assignment = self.store.assignment(self.team_id, agent_name)
         return assignment is not None and assignment.mode == CONNECTED
 
     def account_for(self, agent_name: str, tool_name: str) -> str:
         """Return the assigned account id, or refuse the call."""
-        assignment = self.store.assignment(agent_name)
-        if assignment is None or tool_name not in assignment.tools or not _connected(assignment):
+        assignment = self.store.assignment(self.team_id, agent_name)
+        if (
+            assignment is None
+            or tool_name not in assignment.tools
+            or not _connected(self, assignment)
+        ):
             raise ComposioRejected("This agent is not assigned this read action.")
         connection = self._active(assignment.connection_id)
         return self._confirmed(connection)
 
     def read_window(self, agent_name: str, spreadsheet: str, cell_range: str) -> str:
-        assignment = self.store.assignment(agent_name)
-        if assignment is None or not _connected(assignment):
+        assignment = self.store.assignment(self.team_id, agent_name)
+        if assignment is None or not _connected(self, assignment):
             raise ComposioRejected("This agent is not assigned this read action.")
         requested_id = spreadsheet_id(spreadsheet) if spreadsheet else assignment.spreadsheet_id
         if requested_id != assignment.spreadsheet_id:
@@ -327,7 +340,7 @@ class SheetDesk:
         requested = parse_window(cell_range or assignment.cell_range)
         if not allowed.contains(requested):
             raise ComposioRejected("That range is outside the assigned window.")
-        account_id = self.account_for(agent_name, READ_TOOL)
+        account_id = self.account_for(agent_name, self.tool_name)
         return run_allowlisted_read(
             self.require_gateway(),
             READ_SPEC,
@@ -402,8 +415,8 @@ def parse_window(value: str) -> Window:
 def _read(desk: SheetDesk, agent_name: str):
     async def read_sheet_range(spreadsheet_id_or_url: str = "", cell_range: str = "") -> str:
         """Read the saved window, or refuse a different spreadsheet or range."""
-        assignment = desk.store.assignment(agent_name)
-        if assignment is None or agent_name != SAM:
+        assignment = desk.store.assignment(desk.team_id, agent_name)
+        if assignment is None or agent_name != desk.agent_name:
             raise ComposioRejected("This agent is not assigned this read action.")
         if assignment.mode != CONNECTED:
             raise ComposioRejected("Demo mode does not read the connected spreadsheet.")
@@ -412,11 +425,12 @@ def _read(desk: SheetDesk, agent_name: str):
     return read_sheet_range
 
 
-def _connected(assignment: StoredAssignment) -> bool:
+def _connected(desk: SheetDesk, assignment: StoredAssignment) -> bool:
     return (
-        assignment.agent_name == SAM
+        assignment.team_id == desk.team_id
+        and assignment.agent_name == desk.agent_name
         and assignment.mode == CONNECTED
-        and READ_TOOL in assignment.tools
+        and desk.tool_name in assignment.tools
         and bool(assignment.spreadsheet_id)
         and bool(assignment.cell_range)
     )

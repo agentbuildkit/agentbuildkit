@@ -1,0 +1,28 @@
+{
+  "schema_version": "1",
+  "id": "operations-reporting",
+  "title": "Operations Reporting",
+  "name": "operations-reporting",
+  "agents": [
+    {
+      "name": "analyst",
+      "purpose": "Draft an overdue-jobs summary from the supplied rows",
+      "instructions": "You are the analyst. Call read_jobs with the as-of date. Summarise only the rows it returns. Do not add jobs, change dates, or request another spreadsheet. Put those rows in records and the summary in summary.",
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "input_schema": "JobsRequest",
+      "output_schema": "ReportDraft",
+      "tools": ["read_jobs"]
+    },
+    {
+      "name": "reviewer",
+      "purpose": "Check that the summary is supported by the supplied rows",
+      "instructions": "You are the reviewer. Set supported to true only when every job id in the summary appears in records and the summary adds none. Do not read another source and do not change tools.",
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "input_schema": "ReportDraft",
+      "output_schema": "ReviewedReport",
+      "tools": []
+    }
+  ]
+}

@@ -1,0 +1,224 @@
+"""Dashboard adapter for operations reporting.
+
+The page renderer is shared with customer service. This module supplies that
+team's runs, agents, and request form. It does not approve actions.
+"""
+
+import uuid
+from collections.abc import Callable, Coroutine, Mapping
+from typing import Any
+
+from agentbuildkit.applications import RenderedPage
+from agentbuildkit.evaluation import EvaluationReport
+from agentbuildkit.observability import AuditEvent
+from agentbuildkit.state.models import RegistryRejected, require_argument_hash
+from agentbuildkit.workflows import WorkflowStateStore
+from customer_service.dashboard_model import build_runs, merge_audit
+from customer_service.dashboard_view import (
+    AgentInfo,
+    AssignmentInfo,
+    ConnectionInfo,
+    Snapshot,
+    render_page,
+)
+from customer_service.models import FinalOutcome
+from customer_service.recovery import ActionRecovery, MemoryActionRecovery
+from operations_reporting.jobs import parse_as_of
+from operations_reporting.service import handle_report
+from operations_reporting.sheets import ANALYST, JobWindow
+from operations_reporting.team import REPORTING_DIAGRAM, TEAM_ID, ReportingTeam, reporting_bundle
+
+Evaluate = Callable[[], Coroutine[Any, Any, EvaluationReport]]
+
+
+class ReportingDashboard:
+    """One local operations-reporting service."""
+
+    def __init__(
+        self,
+        team: ReportingTeam,
+        store: WorkflowStateStore,
+        window: JobWindow,
+        recovery: ActionRecovery,
+        *,
+        evaluate: Evaluate | None = None,
+    ) -> None:
+        if store.scope != TEAM_ID:
+            raise RuntimeError("The operations store does not match the team.")
+        self.team = team
+        self.team_id = TEAM_ID
+        self.title = reporting_bundle().display_name
+        self.store = store
+        self.window = window
+        self.recovery = recovery
+        self.base = ""
+        self.installed: tuple[tuple[str, str], ...] = ()
+        self.report: EvaluationReport | None = None
+        self.error = ""
+        self.draft: tuple[str, str] | None = None
+        self._evaluate = evaluate
+        team.audit_log.add_sink(_LedgerSink(store))
+        self.outcomes: list[FinalOutcome] = list(recovery.outcomes(TEAM_ID))
+
+    async def submit(self, as_of: str, note: str) -> FinalOutcome:
+        """Draft one report. The team id is fixed before the model runs."""
+        team_id = self.team_id
+        parse_as_of(as_of)
+        outcome = await handle_report(
+            self.team,
+            _request(as_of, note),
+            correlation_id=uuid.uuid4().hex,
+            store=self.store,
+            window=self.window,
+        )
+        self.recovery.save_outcome(outcome, team_id=team_id)
+        self.outcomes.append(outcome)
+        self.draft = None
+        return outcome
+
+    async def decide(self, request_id: str, *, approved: bool) -> FinalOutcome:
+        """This team has no approval actions."""
+        del request_id, approved
+        raise KeyError(self.team_id)
+
+    async def run_evaluation(self) -> EvaluationReport:
+        if self._evaluate is None:
+            from operations_reporting.evaluation import run_reporting_evaluation
+
+            self._evaluate = run_reporting_evaluation
+        self.report = await self._evaluate()
+        return self.report
+
+    def owns_correlation(self, correlation_id: str) -> bool:
+        return any(item.correlation_id == correlation_id for item in self.outcomes)
+
+    def owns_request(self, request_id: str) -> bool:
+        del request_id
+        return False
+
+    def page(self, path: str = "/", query: Mapping[str, str] | None = None) -> object:
+        return render_page(self.snapshot(), path, query)
+
+    def render(self, path: str = "/", query: Mapping[str, str] | None = None) -> str:
+        rendered = self.page(path, query)
+        return str(getattr(rendered, "body", ""))
+
+    def rendered_page(
+        self, path: str = "/", query: Mapping[str, str] | None = None
+    ) -> RenderedPage:
+        rendered = self.page(path, query)
+        return RenderedPage(
+            status=int(getattr(rendered, "status", 500)),
+            body=str(getattr(rendered, "body", "")),
+        )
+
+    def snapshot(self) -> Snapshot:
+        bundle = reporting_bundle()
+        mode = self.window.desk.store.data_mode(TEAM_ID, ANALYST)
+        return Snapshot(
+            team_name=bundle.team_id,
+            team_id=self.team_id,
+            title=bundle.display_name,
+            base=self.base,
+            installed=self.installed,
+            approvals_enabled=False,
+            summary=(
+                "Two agents draft and review an overdue-jobs report. "
+                "Dates are classified in Python. Nothing is emailed or edited."
+            ),
+            subject_label="As of",
+            form="operations",
+            sheet_agent=ANALYST,
+            footnote="One local operator. This team cannot see customer-service runs.",
+            agents=tuple(
+                AgentInfo(
+                    name=agent.name,
+                    role=agent.purpose,
+                    job=agent.purpose,
+                    provider=agent.provider,
+                    model=agent.model,
+                    input_schema=agent.input_schema,
+                    output_schema=agent.output_schema,
+                    tools=tuple(agent.tools),
+                    instructions=agent.instructions,
+                )
+                for agent in bundle.agents
+            ),
+            runs=build_runs(self.outcomes, {}),
+            approvals=(),
+            audit=merge_audit(self.store.list_ledger(), self.team.audit_log.events),
+            report=self.report,
+            error=self.error,
+            draft=self.draft,
+            persistent=not isinstance(self.recovery, MemoryActionRecovery),
+            connections=self._connections(),
+            assignments=self._assignments(),
+            composio_configured=self.window.desk.connect_ready,
+            composio_auth_missing=(
+                self.window.desk.configured and not self.window.desk.connect_ready
+            ),
+            composio_package_missing=self.window.desk.package_missing,
+            sam_mode=mode,
+            diagram=REPORTING_DIAGRAM,
+            actor_label="Handled by",
+        )
+
+    def _connections(self) -> tuple[ConnectionInfo, ...]:
+        assigned = self.window.desk.store.assignments()
+        return tuple(
+            ConnectionInfo(
+                connection_id=item.connection_id,
+                label=item.label,
+                status=item.status,
+                agents=tuple(
+                    f"{row.team_id}/{row.agent_name}"
+                    for row in assigned
+                    if row.connection_id == item.connection_id
+                ),
+            )
+            for item in self.window.desk.store.connections()
+        )
+
+    def _assignments(self) -> tuple[AssignmentInfo, ...]:
+        by_id = {item.connection_id: item for item in self.window.desk.store.connections()}
+        views: list[AssignmentInfo] = []
+        for row in self.window.desk.store.assignments(TEAM_ID):
+            connection = by_id.get(row.connection_id)
+            views.append(
+                AssignmentInfo(
+                    agent_name=row.agent_name,
+                    connection_id=row.connection_id,
+                    label="" if connection is None else connection.label,
+                    tools=row.tools,
+                    spreadsheet_id=row.spreadsheet_id,
+                    cell_range=row.cell_range,
+                    mode=row.mode,
+                )
+            )
+        return tuple(views)
+
+
+def _request(as_of: str, note: str) -> Any:
+    from operations_reporting.models import JobsRequest
+
+    return JobsRequest(as_of=as_of, note=note)
+
+
+class _LedgerSink:
+    """Copy ledger-compatible audit events. Argument values are not accepted."""
+
+    def __init__(self, store: WorkflowStateStore) -> None:
+        self._store = store
+
+    def append_ledger(
+        self,
+        event: AuditEvent,
+        *,
+        run_id: str | None = None,
+        event_id: str | None = None,
+    ) -> None:
+        try:
+            require_argument_hash(event.argument_hash)
+        except RegistryRejected:
+            return
+        self._store.append_ledger(event, run_id=run_id, event_id=event_id)

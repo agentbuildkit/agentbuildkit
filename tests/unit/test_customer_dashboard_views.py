@@ -349,7 +349,7 @@ async def test_unresolved_action_explains_what_to_check(tmp_path: Path) -> None:
     assert "Unknown outcome for schedule_visit on A-100" in overview
     assert "is unknown" in detail
     assert "Check account A-100" in detail
-    assert "Started, not confirmed" in detail
+    assert "Completion recorded" in detail
     assert "the workflow store did not" in detail
     assert "name='request_id'" not in detail
 

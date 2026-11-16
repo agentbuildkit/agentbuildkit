@@ -289,6 +289,11 @@ class WorkflowStateStore(PlatformStateMixin):
         """Close stored connections from the thread that opened them."""
         self._backend.close()
 
+    def note_pending(self, pending: PendingRequest, *, argument_hash: str) -> None:
+        """Record one paused approval in this store's scope."""
+        scoped = pending.model_copy(update={"scope": self.scope})
+        self._backend.save_pending(scoped, argument_hash=argument_hash)
+
     def mark_pending(self, request_id: str, status: PendingStatus) -> None:
         """Update the visible status of a paused request."""
         self._backend.mark_pending(scope=self.scope, request_id=request_id, status=status)

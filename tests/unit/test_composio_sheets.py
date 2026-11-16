@@ -386,7 +386,7 @@ async def test_connected_mode_uses_sheet_values_and_does_not_fall_back() -> None
             agent_name="sam",
         )
     assert business.account_reads == []
-    assert desk.store.data_mode("sam") == "connected"
+    assert desk.store.data_mode("customer-service", "sam") == "connected"
     desk.assign("sam", connection_id, _SHEET, _RANGE, mode="demo")
     demo = _text(
         await execute_tool(
@@ -538,13 +538,13 @@ def test_assignment_survives_restart_and_the_file_has_no_secrets(tmp_path: Path)
     gateway.user_id = operator
     again = SheetDesk(reopened, gateway)
     assert again.store.operator_id() == operator
-    assignment = again.store.assignment("sam")
+    assignment = again.store.assignment("customer-service", "sam")
     assert assignment is not None
     assert assignment.tools == ("read_sheet_range",)
     assert assignment.spreadsheet_id == _SHEET
     assert assignment.cell_range == _RANGE
     assert assignment.mode == "connected"
-    assert again.store.data_mode("sam") == "connected"
+    assert again.store.data_mode("customer-service", "sam") == "connected"
     assert again.account_for("sam", "read_sheet_range") == _ACCOUNT
     raw = path.read_bytes()
     assert _SECRET.encode() not in raw
