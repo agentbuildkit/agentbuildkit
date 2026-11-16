@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
-from agent_framework import SecretString, SupportsChatGetResponse
+from agent_framework import FunctionTool, SecretString, SupportsChatGetResponse
 from pydantic import BaseModel
 
 from agentbuildkit.agents import AgentDefinition, PlatformAgent, create_agent
@@ -98,6 +98,8 @@ def build_team(
     settings: AppSettings | None = None,
     configurator: Callable[..., None] | None = None,
     roles: Mapping[str, ProviderConfiguration] | None = None,
+    connected_reads: Callable[[str], tuple[FunctionTool, ...]] | None = None,
+    account_guard: Callable[[BusinessSystem], FunctionTool] | None = None,
 ) -> Organisation:
     """Create the team from injected clients and ``team.json``.
 
@@ -117,7 +119,12 @@ def build_team(
     else:
         configure_observability(resolved, configurator=configurator)
     business = BusinessSystem(audit_log=log, api_token=api_token, actions=actions)
-    definitions = _definitions(business, roles)
+    account_tool = None if account_guard is None else account_guard(business)
+    definitions = _definitions(business, roles, account_tool)
+    if connected_reads is not None:
+        definitions = tuple(
+            replace(item, tools=item.tools + connected_reads(item.name)) for item in definitions
+        )
     built = {
         definition.name: create_agent(
             definition,
@@ -139,13 +146,14 @@ def build_team(
 def _definitions(
     business: BusinessSystem,
     roles: Mapping[str, ProviderConfiguration] | None,
+    account_tool: FunctionTool | None = None,
 ) -> tuple[AgentDefinition[BaseModel, BaseModel], ...]:
     """Resolve team.json against this application's schemas and read tools."""
     bundle = customer_team_bundle()
     definitions = bundle.definitions(
         schemas=_SCHEMAS,
         tools={
-            "read_account": business.read_account,
+            "read_account": account_tool or business.read_account,
             "read_service": business.read_service,
         },
     )

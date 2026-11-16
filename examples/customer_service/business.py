@@ -75,6 +75,10 @@ class BusinessSystem:
     async def aclose(self) -> None:
         await self.api.aclose()
 
+    async def demo_account(self, reference: str) -> str:
+        """Read the fixture account. Connected mode does not call this."""
+        return await self._read_account(reference)
+
     async def _read_account(self, reference: str) -> str:
         """Read one customer account. This cannot change the account."""
         found = await self.api.read(

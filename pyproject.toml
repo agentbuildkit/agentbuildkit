@@ -33,6 +33,7 @@ Issues = "https://github.com/gluzio/agentbuildkit/issues"
 
 [project.optional-dependencies]
 foundry = ["agent-framework-foundry==1.15.0"]
+composio = ["composio==0.32.0"]
 
 [project.scripts]
 agentkit = "agentbuildkit.cli:main"
