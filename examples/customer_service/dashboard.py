@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
+from agentbuildkit.applications import RenderedPage
 from agentbuildkit.evaluation import EvaluationReport
 from agentbuildkit.integrations.composio import (
     AUTH_CONFIG_MISSING,
@@ -59,7 +60,7 @@ from customer_service.service import (
     resume_service_action,
 )
 from customer_service.sheets import SheetDesk
-from customer_service.team import Organisation, customer_team_bundle
+from customer_service.team import CUSTOMER_DIAGRAM, Organisation, customer_team_bundle
 
 Evaluate = Callable[[], Coroutine[Any, Any, EvaluationReport]]
 _ALREADY = ALREADY_HANDLED
@@ -87,7 +88,7 @@ ROLES: dict[str, tuple[str, str]] = {
     ),
 }
 STATIC_DIRECTORY = Path(__file__).with_name("static")
-_STATIC_TYPES: dict[str, str] = {
+STATIC_TYPES: dict[str, str] = {
     "dashboard.css": "text/css; charset=utf-8",
     "dashboard.js": "text/javascript; charset=utf-8",
     "fonts/instrument-sans-latin-400-normal.woff2": "font/woff2",
@@ -133,6 +134,11 @@ class DashboardService:
         self.organisation = organisation
         self.store = store
         self.sheets = sheets
+        self.team_id = store.scope
+        self.title = customer_team_bundle().display_name
+        self.base = ""
+        self.installed: tuple[tuple[str, str], ...] = ()
+        self.close_connection_store = True
         self.recovery = recovery or MemoryActionRecovery()
         self.report: EvaluationReport | None = None
         self.error = ""
@@ -143,6 +149,7 @@ class DashboardService:
 
     async def submit(self, reference: str, message: str) -> FinalOutcome:
         """Run one request. A side effect stays pending until a person decides."""
+        team_id = self.team_id
         result = await handle_request(
             self.organisation,
             CustomerRequest(reference=reference, message=message),
@@ -155,21 +162,25 @@ class DashboardService:
                 pending.request_id,
                 result.outcome.reference,
                 result.action_arguments,
+                team_id=team_id,
             )
-        return self._remember(result.outcome)
+        return self._remember(result.outcome, team_id=team_id)
 
     async def decide(self, request_id: str, *, approved: bool) -> FinalOutcome:
         """Resume one stored approval. A closed or uncertain action is not run again."""
+        team_id = self.team_id
         found = self.store.pending_for(request_id)
         if found is None:
             raise KeyError(request_id)
         pending, _digest = found
-        saved = self.recovery.pause_for(request_id)
+        saved = self.recovery.pause_for(team_id, request_id)
         reference = saved[0] if saved is not None else ""
         arguments = saved[1] if saved is not None else None
         existing = self.store.effect_for(_effect_key(pending))
         if pending.status != "pending" or existing is not None:
-            return self._remember(self._closed_outcome(pending, reference, existing))
+            return self._remember(
+                self._closed_outcome(pending, reference, existing), team_id=team_id
+            )
         if approved and arguments is None:
             return self._remember(
                 FinalOutcome(
@@ -178,7 +189,8 @@ class DashboardService:
                     specialist="taylor",
                     response=_MISSING,
                     correlation_id=pending.correlation_id,
-                )
+                ),
+                team_id=team_id,
             )
         outcome = await resume_service_action(
             self.organisation,
@@ -190,20 +202,21 @@ class DashboardService:
         )
         if outcome.response == "The service action was already attempted.":
             return self._remember(
-                outcome.model_copy(update={"response": _UNRESOLVED, "status": "rejected"})
+                outcome.model_copy(update={"response": _UNRESOLVED, "status": "rejected"}),
+                team_id=team_id,
             )
-        return self._remember(outcome)
+        return self._remember(outcome, team_id=team_id)
 
-    def _remember(self, outcome: FinalOutcome) -> FinalOutcome:
-        self.recovery.save_outcome(outcome)
+    def _remember(self, outcome: FinalOutcome, *, team_id: str) -> FinalOutcome:
+        self.recovery.save_outcome(outcome, team_id=team_id)
         self.outcomes.append(outcome)
         return outcome
 
     def _restored_outcomes(self) -> list[FinalOutcome]:
         """Reopen saved outcomes and any approval the store still records."""
-        restored = list(self.recovery.outcomes())
+        restored = list(self.recovery.outcomes(self.team_id))
         for row in self.store.list_pending():
-            saved = self.recovery.pause_for(row.request_id)
+            saved = self.recovery.pause_for(self.team_id, row.request_id)
             reference = saved[0] if saved is not None else ""
             existing = self.store.effect_for(_effect_key(row))
             outcome = _stored_outcome(row, reference, existing)
@@ -249,7 +262,7 @@ class DashboardService:
     def _pauses(self) -> tuple[Pause, ...]:
         pauses: list[Pause] = []
         for row in self.store.list_pending():
-            saved = self.recovery.pause_for(row.request_id)
+            saved = self.recovery.pause_for(self.team_id, row.request_id)
             pauses.append(
                 Pause(
                     request=row,
@@ -284,6 +297,10 @@ class DashboardService:
         )
         return Snapshot(
             team_name=bundle.name,
+            team_id=self.team_id,
+            title=bundle.display_name,
+            base=self.base,
+            installed=self.installed,
             agents=agents,
             runs=build_runs(self.outcomes, by_correlation),
             approvals=open_approvals,
@@ -299,7 +316,13 @@ class DashboardService:
                 self.sheets is not None and self.sheets.configured and not self.sheets.connect_ready
             ),
             composio_package_missing=self.sheets is not None and self.sheets.package_missing,
-            sam_mode="demo" if self.sheets is None else self.sheets.store.data_mode("sam"),
+            sam_mode=(
+                "demo"
+                if self.sheets is None
+                else self.sheets.store.data_mode(self.sheets.team_id, "sam")
+            ),
+            diagram=CUSTOMER_DIAGRAM,
+            actor_label="Specialist",
         )
 
     def page(self, path: str = "/", query: Mapping[str, str] | None = None) -> Page:
@@ -309,6 +332,21 @@ class DashboardService:
     def render(self, path: str = "/", query: Mapping[str, str] | None = None) -> str:
         """Render one page. Secrets are not included."""
         return self.page(path, query).body
+
+    def rendered_page(
+        self, path: str = "/", query: Mapping[str, str] | None = None
+    ) -> RenderedPage:
+        """Return the status and HTML for the shared team interface."""
+        rendered = self.page(path, query)
+        return RenderedPage(status=rendered.status, body=rendered.body)
+
+    def owns_correlation(self, correlation_id: str) -> bool:
+        """True when this team's history contains that run."""
+        return any(item.correlation_id == correlation_id for item in self.outcomes)
+
+    def owns_request(self, request_id: str) -> bool:
+        """True when this team's store holds that approval."""
+        return self.store.pending_for(request_id) is not None
 
     def prepare_sign_in(self, session_token: str, callback_url: str) -> tuple[str, str]:
         """Reserve a callback on the owner thread. Composio is not called."""
@@ -416,7 +454,9 @@ class DashboardService:
                 label=item.label,
                 status=item.status,
                 agents=tuple(
-                    row.agent_name for row in assigned if row.connection_id == item.connection_id
+                    f"{row.team_id}/{row.agent_name}"
+                    for row in assigned
+                    if row.connection_id == item.connection_id
                 ),
             )
             for item in self.sheets.store.connections()
@@ -427,7 +467,7 @@ class DashboardService:
             return ()
         by_id = {item.connection_id: item for item in self.sheets.store.connections()}
         views: list[AssignmentInfo] = []
-        for row in self.sheets.store.assignments():
+        for row in self.sheets.store.assignments(self.sheets.team_id):
             connection = by_id.get(row.connection_id)
             views.append(
                 AssignmentInfo(
@@ -446,8 +486,9 @@ class DashboardService:
         """Where the page goes after a decision: the run, or the approvals list."""
         found = self.store.pending_for(request_id)
         if found is None:
-            return "/approvals"
-        return f"/runs/{found[0].correlation_id}"
+            return f"{self.base}/approvals" if self.base else "/approvals"
+        prefix = self.base or ""
+        return f"{prefix}/runs/{found[0].correlation_id}"
 
 
 def describe_error(error: BaseException) -> str:
@@ -722,7 +763,7 @@ def serve(
             self.end_headers()
 
         def _static(self, name: str) -> None:
-            content_type = _STATIC_TYPES.get(name)
+            content_type = STATIC_TYPES.get(name)
             if content_type is None:
                 self._send(404, b"Not found", "text/plain; charset=utf-8", cache="no-store")
                 return
@@ -763,66 +804,10 @@ def serve(
 
 
 def main() -> None:
-    """Open the dashboard for a live team. Offline tests construct the service."""
-    from pathlib import Path
+    """Open the local dashboard for every installed team."""
+    from office.server import main as office_main
 
-    from agent_framework import SecretString
-
-    from agentbuildkit.config import load_composio_settings
-    from agentbuildkit.integrations.composio import ComposioUnavailable, LiveComposioGateway
-    from agentbuildkit.observability import AuditLog
-    from customer_service.cli import open_workflow_store, state_directory
-    from customer_service.connections import MemoryConnectionStore, SqliteConnectionStore
-    from customer_service.evaluation import LOCAL_MOCK_TOKEN
-    from customer_service.recovery import SqliteActionRecovery
-    from customer_service.sheets import SheetDesk
-    from customer_service.team import ORGANISATION_SCOPE, build_team, production_clients
-
-    env_file = Path.cwd() / ".env"
-    env_path = str(env_file) if env_file.is_file() else None
-
-    def open_dashboard() -> DashboardService:
-        clients = production_clients(env_file_path=env_path)
-        audit_log = AuditLog()
-        directory = state_directory(env_file if env_file.is_file() else None)
-        connections = (
-            SqliteConnectionStore(Path(directory) / "connections.sqlite")
-            if directory is not None
-            else MemoryConnectionStore()
-        )
-        composio = load_composio_settings(env_file_path=env_path)
-        composio_key = composio.get("api_key")
-        auth_config_id = composio.get("googlesheets_auth_config_id") or ""
-        gateway = None
-        package_missing = False
-        if composio_key is not None:
-            try:
-                gateway = LiveComposioGateway(composio_key, auth_config_id=auth_config_id)
-            except ComposioUnavailable:
-                package_missing = True
-        desk = SheetDesk(connections, gateway, package_missing=package_missing)
-        organisation = build_team(
-            clients=clients,
-            api_token=SecretString(LOCAL_MOCK_TOKEN),
-            audit_log=audit_log,
-            connected_reads=desk.tools_for,
-            account_guard=desk.guard_account,
-        )
-        store = open_workflow_store(audit_log, directory)
-        recovery = None
-        if directory is not None:
-            recovery = SqliteActionRecovery(Path(directory) / "action-recovery.sqlite")
-        if store.scope != ORGANISATION_SCOPE:
-            raise RuntimeError("The dashboard store scope does not match the team.")
-        return DashboardService(organisation, store, recovery=recovery, sheets=desk)
-
-    binding = serve(open_dashboard)
-    address = binding.server_address
-    print(f"Customer-service dashboard at http://{address[0]}:{address[1]}")
-    try:
-        threading.Event().wait()
-    except KeyboardInterrupt:
-        binding.shutdown()
+    office_main()
 
 
 async def _call(call: Callable[[], object]) -> object:
@@ -835,7 +820,7 @@ async def _close_service(service: DashboardService) -> None:
     finally:
         service.store.close()
         service.recovery.close()
-        if service.sheets is not None:
+        if service.sheets is not None and service.close_connection_store:
             service.sheets.store.close()
 
 
@@ -907,6 +892,16 @@ def _same_outcome(outcomes: list[FinalOutcome], outcome: FinalOutcome) -> bool:
         item.correlation_id == outcome.correlation_id and item.status == outcome.status
         for item in outcomes
     )
+
+
+def form_field(fields: dict[str, list[str]], name: str) -> str:
+    """Return one posted form value, or an empty string."""
+    return _field(fields, name)
+
+
+def security_headers(port: int) -> tuple[tuple[str, str], ...]:
+    """Response headers for the local dashboard, including the page policy."""
+    return _security_headers(port)
 
 
 def _field(fields: dict[str, list[str]], name: str) -> str:

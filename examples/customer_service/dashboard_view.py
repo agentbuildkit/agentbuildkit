@@ -11,20 +11,24 @@ from html import escape
 
 from agentbuildkit.evaluation import EvaluationReport
 from agentbuildkit.workflows import PendingRequest
+from agentbuildkit.workflows.diagram import (
+    DiagramStep,
+    NodeState,
+    Route,
+    RouteNode,
+    WorkflowDiagram,
+    build_route,
+    link_on,
+)
 from customer_service.dashboard_model import (
     STATES,
     AuditItem,
     Category,
-    NodeState,
     Pause,
-    Route,
-    RouteNode,
     Run,
     State,
-    build_route,
     clock,
     day_and_time,
-    link_on,
     outcome_state,
 )
 
@@ -67,6 +71,9 @@ class ConnectionInfo:
     agents: tuple[str, ...]
 
 
+_UNREGISTERED_DIAGRAM = WorkflowDiagram(stages=(DiagramStep("request", "Request", "entry"),))
+
+
 @dataclass(frozen=True)
 class Snapshot:
     """Everything one page needs, read on the database owner thread."""
@@ -86,6 +93,18 @@ class Snapshot:
     composio_auth_missing: bool = False
     composio_package_missing: bool = False
     sam_mode: str = "demo"
+    team_id: str = ""
+    title: str = ""
+    base: str = ""
+    installed: tuple[tuple[str, str], ...] = ()
+    approvals_enabled: bool = True
+    summary: str = ""
+    subject_label: str = "Customer"
+    form: str = "customer"
+    sheet_agent: str = "sam"
+    footnote: str = ""
+    diagram: WorkflowDiagram = _UNREGISTERED_DIAGRAM
+    actor_label: str = "Specialist"
 
 
 @dataclass(frozen=True)
@@ -203,8 +222,24 @@ def short(correlation_id: str) -> str:
     return correlation_id[:8]
 
 
-def run_href(correlation_id: str) -> str:
-    return f"/runs/{e(correlation_id)}"
+def loc(snap: Snapshot, path: str) -> str:
+    """Prefix a dashboard path with the team mount. Static files stay at the root."""
+    base = snap.base.rstrip("/")
+    if path.startswith("/?"):
+        return f"{base}/{path[1:]}" if base else path
+    if not path.startswith("/"):
+        path = "/" + path
+    return f"{base}{path}" if base else path
+
+
+def run_href(snap: Snapshot, correlation_id: str) -> str:
+    return loc(snap, f"/runs/{correlation_id}")
+
+
+def hidden_team(snap: Snapshot) -> str:
+    if not snap.team_id:
+        return ""
+    return f'<input type="hidden" name="team_id" value="{e(snap.team_id)}">'
 
 
 def title_name(name: str) -> str:
@@ -224,6 +259,18 @@ _NAV: tuple[tuple[str, str, str], ...] = (
 )
 
 
+def _switcher(snap: Snapshot) -> str:
+    if len(snap.installed) < 2:
+        return ""
+    links: list[str] = []
+    for team_id, title in snap.installed:
+        current = ' aria-current="true"' if team_id == snap.team_id else ""
+        links.append(f'<a href="/teams/{e(team_id)}/"{current}>{e(title)}</a>')
+    return f"""<nav class="teams" aria-label="Installed teams">{"".join(links)}
+<p class="xs">One local operator. Each team keeps its own runs, approvals, and spreadsheet
+window.</p></nav>"""
+
+
 def _sidebar(snap: Snapshot, current: str) -> str:
     links: list[str] = []
     for label, name, href in _NAV:
@@ -232,7 +279,7 @@ def _sidebar(snap: Snapshot, current: str) -> str:
         if label == "Approvals" and snap.approvals:
             n = len(snap.approvals)
             count = f'<span class="count" aria-label="{n} waiting">{n}</span>'
-        links.append(f'<a href="{href}"{mark}>{icon(name)}{label}{count}</a>')
+        links.append(f'<a href="{loc(snap, href)}"{mark}>{icon(name)}{label}{count}</a>')
     providers = sorted({agent.provider for agent in snap.agents})
     provider_text = ", ".join(p.title() if p != "openai" else "OpenAI" for p in providers)
     if snap.persistent:
@@ -245,12 +292,15 @@ def _sidebar(snap: Snapshot, current: str) -> str:
             f'<span class="row">{icon("alert", 15)}Memory only</span>'
             "<span>Approvals are lost when the dashboard stops.</span>"
         )
+    shown = snap.title or snap.team_name
+    footnote = snap.footnote or "Customer data here is demo data."
     return f"""<nav class="side" aria-label="Dashboard">
   <div class="brand">{_LOGO}AgentBuildKit</div>
-  <div class="teamcard">{e(snap.team_name)}<small>{len(snap.agents)} agents,
+  {_switcher(snap)}
+  <div class="teamcard">{e(shown)}<small>{e(snap.team_name)} · {len(snap.agents)} agents,
 {e(provider_text)}</small></div>
   <div class="nav">{"".join(links)}</div>
-  <div class="sidefoot">{storage}<span>Customer data here is demo data.</span></div>
+  <div class="sidefoot">{storage}<span>{e(footnote)}</span></div>
 </nav>"""
 
 
@@ -309,7 +359,7 @@ def _attention(snap: Snapshot) -> str:
     <p class="muted sm">It was started, but never confirmed as finished. It won't be sent again.
 Check the business system before acting.</p>
   </div>
-  <a class="btn btn-secondary" href="{run_href(run.correlation_id)}">View run</a>
+  <a class="btn btn-secondary" href="{run_href(snap, run.correlation_id)}">View run</a>
 </div>"""
             )
         elif run.state == "failed":
@@ -321,7 +371,7 @@ Check the business system before acting.</p>
     <p class="muted sm">The attempt ended with an error and won't be repeated. Check the business
 system if you need to confirm what happened.</p>
   </div>
-  <a class="btn btn-secondary" href="{run_href(run.correlation_id)}">View run</a>
+  <a class="btn btn-secondary" href="{run_href(snap, run.correlation_id)}">View run</a>
 </div>"""
             )
     count = len(rows)
@@ -355,7 +405,8 @@ def _attention_approval(snap: Snapshot, pause: Pause) -> str:
     return f"""<div class="attn-row">
   <span class="badge badge-wait">{icon("clock", 18)}</span>
   <div class="attn-text"><h3>{title}</h3><p class="muted sm">{text}</p></div>
-  <a class="btn btn-primary" href="/approvals#approval-{e(pause.request.request_id)}">Review and
+  <a class="btn btn-primary"
+href="{loc(snap, "/approvals")}#approval-{e(pause.request.request_id)}">Review and
 decide</a>
 </div>"""
 
@@ -364,11 +415,11 @@ def _run_for(snap: Snapshot, correlation_id: str) -> Run | None:
     return next((run for run in snap.runs if run.correlation_id == correlation_id), None)
 
 
-def _runs_table(runs: Sequence[Run], *, caption: str) -> str:
+def _runs_table(snap: Snapshot, runs: Sequence[Run], *, caption: str) -> str:
     if not runs:
-        return """<div class="empty"><h3>No runs yet</h3>
+        return f"""<div class="empty"><h3>No runs yet</h3>
 <p class="muted sm">Send a request, or start from one of the examples.</p>
-<a class="btn btn-secondary" href="/?new=1">New request</a></div>"""
+<a class="btn btn-secondary" href="{loc(snap, "/?new=1")}">New request</a></div>"""
     rows: list[str] = []
     for run in runs:
         changes = len(run.history)
@@ -383,13 +434,14 @@ def _runs_table(runs: Sequence[Run], *, caption: str) -> str:
   <td>{e(run.reference) if run.reference else '<span class="muted">Unknown</span>'}</td>
   <td>{agent}</td>
   <td><div class="outcome">{e(run.response)}</div>{extra}</td>
-  <td><a class="row-link" href="{run_href(run.correlation_id)}"
+  <td><a class="row-link" href="{run_href(snap, run.correlation_id)}"
 aria-label="Open run {e(short(run.correlation_id))}">{e(short(run.correlation_id))}</a></td>
 </tr>"""
         )
     return f"""<div class="table-scroll"><table>
   <caption class="visually-hidden">{e(caption)}</caption>
-  <thead><tr><th scope="col">Status</th><th scope="col">Customer</th><th scope="col">Agent</th><th
+  <thead><tr><th scope="col">Status</th><th scope="col">{e(snap.subject_label)}</th>
+<th scope="col">Agent</th><th
 scope="col">Outcome</th><th scope="col">Run</th></tr></thead>
   <tbody>{"".join(rows)}</tbody>
 </table></div>"""
@@ -420,12 +472,30 @@ class="xs muted">{e(agent.role)}</span></span>
 </details>"""
         )
     return f"""<section class="card" aria-labelledby="team-heading">
-  <div class="card-head"><h2 id="team-heading">Team</h2><a class="sm" href="/team">Team
+  <div class="card-head"><h2 id="team-heading">Team</h2>
+<a class="sm" href="{loc(snap, "/team")}">Team
 details</a></div>
   {"".join(items)}
-  <p class="card-foot">Side effects aren't on any agent's tool list. They run only after you
-approve.</p>
+  <p class="card-foot">{_team_foot(snap)}</p>
 </section>"""
+
+
+def _team_foot(snap: Snapshot) -> str:
+    if snap.approvals_enabled:
+        return "Side effects aren't on any agent's tool list. They run only after you approve."
+    return "This team only reads. It does not schedule work, send email, or edit a spreadsheet."
+
+
+def _run_limits(snap: Snapshot) -> str:
+    if snap.approvals_enabled:
+        opening = "The customer's original message isn't saved with the run. "
+    else:
+        opening = "The original note isn't saved with the run. "
+    return (
+        opening + "Outcomes have no timestamps, only their order. A route stage is marked "
+        "only when this run's audit events record it. The audit ledger keeps argument "
+        "hashes, not values."
+    )
 
 
 def _provider(name: str) -> str:
@@ -442,22 +512,32 @@ def _evaluation_card(snap: Snapshot) -> str:
   <div class="row-s"><h2 id="eval-heading">Offline evaluation</h2><span
 class="tag">Scripted</span></div>
   {result}
-  <p class="xs muted">Scripted replies and a mock business system. Not results from live
-requests.</p>
-  <form method="post" action="/evaluate" data-busy-label="Running evaluation">
+  <p class="xs muted">{_evaluation_note(snap)}</p>
+  <form method="post" action="{loc(snap, "/evaluate")}" data-busy-label="Running evaluation">
+    {hidden_team(snap)}
     <button class="btn btn-secondary" type="submit">Run evaluation</button>
   </form>
-  <a class="sm" href="/evaluation">View scenarios</a>
+  <a class="sm" href="{loc(snap, "/evaluation")}">View scenarios</a>
 </section>"""
+
+
+def _evaluation_note(snap: Snapshot) -> str:
+    if snap.approvals_enabled:
+        return "Scripted replies and a mock business system. Not results from live requests."
+    return "Scripted replies and the labelled demo jobs. Not results from a connected spreadsheet."
 
 
 def overview(snap: Snapshot, query: Mapping[str, str]) -> Page:
     open_sheet = query.get("new") == "1" or snap.draft is not None
     banner = "" if snap.draft is not None else error_banner(snap.error)
-    title = snap.team_name.replace("-", " ").capitalize()
+    title = snap.title or snap.team_name.replace("-", " ").capitalize()
+    summary = snap.summary or (
+        "Four agents answer customer requests. Changes to the business system wait for "
+        "your approval."
+    )
     recent = snap.runs[:_RECENT]
     more = (
-        f'<a class="sm" href="/runs">All {len(snap.runs)} runs</a>'
+        f'<a class="sm" href="{loc(snap, "/runs")}">All {len(snap.runs)} runs</a>'
         if len(snap.runs) > _RECENT
         else ""
     )
@@ -466,10 +546,9 @@ def overview(snap: Snapshot, query: Mapping[str, str]) -> Page:
   <div class="stack-xs">
     <div class="titlerow"><h1>{e(title)}</h1><span class="tag">{icon("info", 13)}Demo
 data</span></div>
-    <p class="muted">Four agents answer customer requests. Changes to the business system wait for
-your approval.</p>
+    <p class="muted">{e(summary)}</p>
   </div>
-  <a class="btn btn-primary" href="/?new=1">{icon("plus")}New request</a>
+  <a class="btn btn-primary" href="{loc(snap, "/?new=1")}">{icon("plus")}New request</a>
 </header>
 {_attention(snap)}
 <div class="grid-main">
@@ -479,7 +558,7 @@ your approval.</p>
 the latest status of one request.</p></div>
       {more}
     </div>
-    {_runs_table(recent, caption="Recent runs")}
+    {_runs_table(snap, recent, caption="Recent runs")}
   </section>
   <div class="stack-l">
     {_team_summary(snap)}
@@ -493,6 +572,8 @@ the latest status of one request.</p></div>
 
 
 def _sheet(snap: Snapshot, query: Mapping[str, str]) -> str:
+    if snap.form == "operations":
+        return _operations_sheet(snap)
     reference, message = snap.draft if snap.draft is not None else ("A-100", "")
     chosen = -1
     example = query.get("example", "")
@@ -507,16 +588,20 @@ def _sheet(snap: Snapshot, query: Mapping[str, str]) -> str:
     links: list[str] = []
     for index, (label, hint, text) in enumerate(EXAMPLES):
         current = "true" if index == chosen else "false"
+        example_href = loc(snap, f"/?new=1&example={index}").replace("&", "&amp;")
         links.append(
-            f'<a class="example" href="/?new=1&amp;example={index}" data-example="{e(text)}" '
+            f'<a class="example" href="{example_href}" '
+            f'data-example="{e(text)}" '
             f'aria-current="{current}"><span>{e(label)}</span>'
             f'<span class="xs muted">{e(hint)}</span></a>'
         )
     return f"""<div class="scrim" aria-hidden="true"></div>
 <aside class="sheet" aria-labelledby="new-request-heading" data-sheet>
   <div class="sheet-head"><h2 id="new-request-heading">New request</h2>
-    <a class="iconbtn" href="/" data-close aria-label="Close">{icon("close")}</a></div>
-  <form method="post" action="/run" data-busy-label="Sending request">
+    <a class="iconbtn" href="{loc(snap, "/")}" data-close aria-label="Close">{icon("close")}</a>
+</div>
+  <form method="post" action="{loc(snap, "/run")}" data-busy-label="Sending request">
+    {hidden_team(snap)}
     <div class="sheet-body">
       {error}
       <div>
@@ -537,10 +622,47 @@ placeholder="What does the customer need?">{e(message)}</textarea>
     </div>
     <div class="sheet-foot">
       <button class="btn btn-primary" type="submit">Send request</button>
-      <a class="btn btn-secondary" href="/">Cancel</a>
+      <a class="btn btn-secondary" href="{loc(snap, "/")}">Cancel</a>
       <p
 data-busy-status="Waiting for the team to finish. This page updates when the run ends.">Runs the
 live team. Any change to the business system waits for your approval first.</p>
+    </div>
+  </form>
+</aside>"""
+
+
+def _operations_sheet(snap: Snapshot) -> str:
+    as_of, note = snap.draft if snap.draft is not None else ("2026-11-16", "")
+    error = ""
+    if snap.draft is not None and snap.error:
+        error = f"""<div class="banner is-error" role="alert">{icon("alert")}
+<div><p class="strong">The report didn't run.</p><p>{e(snap.error)}</p></div><span></span></div>"""
+    return f"""<div class="scrim" aria-hidden="true"></div>
+<aside class="sheet" aria-labelledby="new-request-heading" data-sheet>
+  <div class="sheet-head"><h2 id="new-request-heading">New report</h2>
+    <a class="iconbtn" href="{loc(snap, "/")}" data-close aria-label="Close">{icon("close")}</a>
+</div>
+  <form method="post" action="{loc(snap, "/run")}" data-busy-label="Writing report">
+    {hidden_team(snap)}
+    <div class="sheet-body">
+      {error}
+      <div>
+        <label for="as_of">As of</label>
+        <input type="text" id="as_of" name="as_of" value="{e(as_of)}" required
+autocomplete="off" inputmode="numeric" spellcheck="false">
+        <p class="field-help">Use YYYY-MM-DD. Overdue means open and due before this date.</p>
+      </div>
+      <div>
+        <label for="note">Note</label>
+        <textarea id="note" name="note" placeholder="Optional note for the report">{e(note)}
+</textarea>
+      </div>
+    </div>
+    <div class="sheet-foot">
+      <button class="btn btn-primary" type="submit">Write report</button>
+      <a class="btn btn-secondary" href="{loc(snap, "/")}">Cancel</a>
+      <p>Reads the labelled demo jobs, or the spreadsheet window saved for Analyst. It does not
+send email or edit the sheet.</p>
     </div>
   </form>
 </aside>"""
@@ -552,9 +674,9 @@ live team. Any change to the business system waits for your approval first.</p>
 def runs_page(snap: Snapshot) -> Page:
     content = f"""{error_banner(snap.error)}
 <header class="head"><div class="stack-xs"><h1>Runs</h1>
-<p class="muted">Every request in this dashboard's history, newest first.</p></div>
-<a class="btn btn-primary" href="/?new=1">{icon("plus")}New request</a></header>
-<section class="card">{_runs_table(snap.runs, caption="All runs")}</section>"""
+<p class="muted">Every request for this team, newest first.</p></div>
+<a class="btn btn-primary" href="{loc(snap, "/?new=1")}">{icon("plus")}New request</a></header>
+<section class="card">{_runs_table(snap, snap.runs, caption="All runs")}</section>"""
     return Page(200, layout(snap, title="Runs", current="Runs", content=content))
 
 
@@ -566,11 +688,11 @@ def _trace(route: Route) -> str:
         if index < len(nodes) - 1:
             link = " has-link" + (" is-on" if link_on(node, nodes[index + 1]) else "")
         cells.append(_node(node, f"col-{index + 1} row-1{link}"))
-    cells.append(_node(route.other, "col-3 row-2", branch=True))
+    for column, node in route.branches:
+        cells.append(_node(node, f"col-{column} row-2", branch=True))
     return (
-        '<div class="trace" role="list" aria-label="Route for this run">'
-        + "".join(cells)
-        + "</div>"
+        f'<div class="trace cols-{len(nodes)}" role="list" '
+        'aria-label="Route for this run">' + "".join(cells) + "</div>"
     )
 
 
@@ -697,7 +819,7 @@ def run_page(snap: Snapshot, correlation_id: str, query: Mapping[str, str]) -> P
     counts: dict[str, int] = {}
     for item in items:
         counts[item.category] = counts.get(item.category, 0) + 1
-    base = run_href(correlation_id)
+    base = run_href(snap, correlation_id)
     all_mark = ' aria-current="true"' if category not in _CATEGORY_LABELS else ""
     tabs.append(f'<a href="{base}#audit-heading"{all_mark}>All {len(items)}</a>')
     for key, label in _CATEGORY_LABELS.items():
@@ -710,19 +832,20 @@ def run_page(snap: Snapshot, correlation_id: str, query: Mapping[str, str]) -> P
         item for item in items if category not in _CATEGORY_LABELS or item.category == category
     ]
     specialist = title_name(run.specialist)
+    subject = f"{e(snap.subject_label)} {e(run.reference or 'unknown')}"
     if run.state == "not_routed":
-        sub = f"Customer {e(run.reference or 'unknown')}. No specialist was chosen."
+        sub = f"{subject}. No route was recorded."
     elif specialist:
-        sub = f"Customer {e(run.reference or 'unknown')}, handled by {e(specialist)}."
+        sub = f"{subject}, handled by {e(specialist)}."
     else:
-        sub = f"Customer {e(run.reference or 'unknown')}."
-    callout = _callout(run)
+        sub = f"{subject}."
+    callout = _callout(snap, run)
     decision = ""
     if run.state == "waiting" and run.pause is not None and run.pause.request.status == "pending":
         decision = decision_card(snap, run.pause)
     unrecorded = _effect_note(run, items)
     content = f"""{error_banner(snap.error)}
-<a class="crumb" href="/runs">{icon("back", 14)}Runs</a>
+<a class="crumb" href="{loc(snap, "/runs")}">{icon("back", 14)}Runs</a>
 <header class="head"><div class="stack-xs">
   <div class="titlerow"><h1>Run <span
 class="mono">{e(short(correlation_id))}</span></h1>{status(run.state)}</div>
@@ -734,7 +857,13 @@ class="mono">{e(short(correlation_id))}</span></h1>{status(run.state)}</div>
   <div class="row-s head"><h2 id="route-heading">Route</h2>
     <div class="legend"><span><span class="ln"></span>Recorded in this run</span><span><span
 class="ln cfg"></span>Configured, not used</span></div></div>
-  {_trace(build_route(run, snap.audit))}
+  {
+        _trace(
+            build_route(
+                snap.diagram, items, correlation_id=run.correlation_id, reference=run.reference
+            )
+        )
+    }
 </section>
 <div class="grid-detail">
   <div class="stack-l">
@@ -752,14 +881,12 @@ are UTC, from the saved ledger</span></div>
     <section class="card card-pad" aria-labelledby="details-heading">
       <h2 id="details-heading">Run details</h2>
       <dl class="kv narrow">
-        <dt>Customer</dt><dd>{e(run.reference or "Unknown")}</dd>
-        <dt>Specialist</dt><dd>{e(specialist or "None")}</dd>
+        <dt>{e(snap.subject_label)}</dt><dd>{e(run.reference or "Unknown")}</dd>
+        <dt>{e(snap.actor_label)}</dt><dd>{e(specialist or "None")}</dd>
         <dt>Correlation</dt><dd class="mono">{e(correlation_id)}</dd>
       </dl>
       <details class="more"><summary>{icon("chev", 12, "chev")}What this page can't show</summary>
-        <p class="sm muted">The customer's original message isn't saved with the run. Outcomes have
-no timestamps, only their order. Jordan's verdict is inferred from the recorded outcome. The
-audit ledger keeps argument hashes, not values.</p>
+        <p class="sm muted">{_run_limits(snap)}</p>
       </details>
     </section>
   </div>
@@ -786,7 +913,7 @@ def _effect_note(run: Run, items: Sequence[AuditItem]) -> str:
     return f'<p class="endrow">{e(text)}</p>'
 
 
-def _callout(run: Run) -> str:
+def _callout(snap: Snapshot, run: Run) -> str:
     action = (
         f'<span class="mono">{e(run.pause.action)}</span>'
         if run.pause and run.pause.action
@@ -807,7 +934,7 @@ way.</p>
     <p class="sm muted">It won't be retried automatically: sending again could repeat the change. A
 failed run is different: there the attempt ended with an error.</p>
     <div class="row-s"><a class="btn btn-secondary" href="#audit-heading">See audit events</a><a
-class="btn btn-secondary" href="/?new=1">{icon("plus")}New request</a></div>
+class="btn btn-secondary" href="{loc(snap, "/?new=1")}">{icon("plus")}New request</a></div>
   </div>
 </section>"""
     if run.state == "failed":
@@ -884,20 +1011,21 @@ aria-labelledby="h-{request_id}">
     <p class="muted">The pause was found, but its action details weren't saved: the arguments were
 not recovered. You can reject it. You can't approve it, because there is nothing safe to
 send.</p></div>
-  <form class="bar" method="post" action="/decide" data-busy-label="Sending decision">
+  <form class="bar" method="post" action="{loc(snap, "/decide")}"
+data-busy-label="Sending decision">
+    {hidden_team(snap)}
     <input type='hidden' name='request_id' value='{request_id}'>
     <button class="btn" type="button" disabled>Approve</button>
     <button class="btn btn-secondary" type="submit" name="decision" value="reject">Reject</button>
   </form>
-  {_technical(request)}
+  {_technical(snap, request)}
 </section>"""
     reference = e(pause.reference or "Unknown")
     return f"""<section class="card decision" id="approval-{request_id}"
 aria-labelledby="h-{request_id}">
   <div class="decision-head">{status("waiting")}
     <h2 id="h-{request_id}"><span class="mono">{e(pause.action)}</span> for {reference}</h2>
-    <p class="muted">{e(specialist)} proposed this action and Jordan approved the response. Nothing
-has been sent yet.</p></div>
+    <p class="muted">{e(specialist)} proposed this action. Nothing has been sent yet.</p></div>
   <div class="section"><dl class="kv">
     <dt>Action</dt><dd class="mono">{e(pause.action)}</dd>
     <dt>Customer</dt><dd>{reference} <span class="muted">(demo data)</span></dd>
@@ -916,7 +1044,9 @@ in the audit log and the run closes as declined.</p></div>
     <div class="note">{icon("info")}<span>The customer's message and {e(specialist)}'s draft reply
 aren't saved with the pause, so they can't be shown here.</span></div>
   </div>
-  <form class="bar" method="post" action="/decide" data-busy-label="Sending decision">
+  <form class="bar" method="post" action="{loc(snap, "/decide")}"
+data-busy-label="Sending decision">
+    {hidden_team(snap)}
     <input type='hidden' name='request_id' value='{request_id}'>
     <button class="btn btn-primary" type="submit" name="decision" value="approve">Approve and
 send</button>
@@ -925,11 +1055,11 @@ send</button>
 data-busy-status="Waiting for the workflow to report back. Nothing is confirmed yet.">The result
 appears once the workflow reports back.</span>
   </form>
-  {_technical(request)}
+  {_technical(snap, request)}
 </section>"""
 
 
-def _technical(request: PendingRequest) -> str:
+def _technical(snap: Snapshot, request: PendingRequest) -> str:
     correlation = request.correlation_id
     request_id = request.request_id
     checkpoint = request.checkpoint_id
@@ -938,7 +1068,7 @@ def _technical(request: PendingRequest) -> str:
   <details class="more"><summary>{icon("chev", 12, "chev")}Technical details</summary>
     <dl class="kv">
       <dt>Correlation ID</dt><dd class="mono"><a
-href="{run_href(correlation)}">{e(correlation)}</a></dd>
+href="{run_href(snap, correlation)}">{e(correlation)}</a></dd>
       <dt>Request ID</dt><dd class="mono">{e(request_id)}</dd>
       <dt>Checkpoint ID</dt><dd class="mono">{e(checkpoint)}</dd>
       <dt>Workflow</dt><dd class="mono">{e(workflow)}</dd>
@@ -948,6 +1078,15 @@ href="{run_href(correlation)}">{e(correlation)}</a></dd>
 
 
 def approvals_page(snap: Snapshot) -> Page:
+    if not snap.approvals_enabled:
+        cards = """<section class="card"><div class="empty"><h3>No approval actions</h3>
+<p class="muted sm">This team only reads. It does not schedule work, send email, or edit a
+spreadsheet, so there is nothing to approve.</p></div></section>"""
+        content = f"""{error_banner(snap.error)}
+<header class="head"><div class="stack-xs"><h1>Approvals</h1>
+<p class="muted">{e(snap.title)} has no side effects.</p></div></header>
+{cards}"""
+        return Page(200, layout(snap, title="Approvals", current="Approvals", content=content))
     if snap.approvals:
         cards = "".join(decision_card(snap, pause) for pause in snap.approvals)
     else:
@@ -989,10 +1128,12 @@ def audit_page(snap: Snapshot, query: Mapping[str, str]) -> Page:
         run_status = status(run.state) if run else ""
         reference = f"{e(run.reference)}, " if run and run.reference else ""
         noun = "event" if len(group) == 1 else "events"
+        href = run_href(snap, correlation_id)
+        label = e(short(correlation_id))
         link = (
-            f'<a class="mono" href="{run_href(correlation_id)}">{e(short(correlation_id))}</a>'
+            f'<a class="mono" href="{href}">{label}</a>'
             if run
-            else f'<span class="mono">{e(short(correlation_id))}</span>'
+            else f'<span class="mono">{label}</span>'
         )
         groups.append(
             f"""<section class="card" aria-label="Run {e(short(correlation_id))}">
@@ -1004,9 +1145,9 @@ def audit_page(snap: Snapshot, query: Mapping[str, str]) -> Page:
     filtered = any((run_filter, agent_filter, category_filter, outcome_filter))
     if not groups:
         if filtered:
-            body = """<section class="card"><div class="empty"><h3>No events match these
+            body = f"""<section class="card"><div class="empty"><h3>No events match these
 filters</h3>
-<a class="btn btn-secondary" href="/audit">Clear filters</a></div></section>"""
+<a class="btn btn-secondary" href="{loc(snap, "/audit")}">Clear filters</a></div></section>"""
         else:
             body = """<section class="card"><div class="empty"><h3>No audit events yet</h3>
 <p class="muted sm">Events appear when a request runs.</p></div></section>"""
@@ -1031,8 +1172,11 @@ filters</h3>
         ],
         outcome_filter,
     )
-    clear = '<a class="btn btn-secondary" href="/audit">Clear</a>' if filtered else ""
-    form = f"""<form class="card filters" method="get" action="/audit" data-autosubmit
+    clear = (
+        f'<a class="btn btn-secondary" href="{loc(snap, "/audit")}">Clear</a>' if filtered else ""
+    )
+    form = f"""<form class="card filters" method="get" action="{loc(snap, "/audit")}"
+data-autosubmit
 aria-label="Filter audit events">
   <div><label for="f-run">Run</label><select id="f-run"
 name="run">{run_options}</select></div>
@@ -1071,9 +1215,10 @@ mock. No API key is used. These results describe the harness, not the requests o
 page.</p></div>"""
     report = snap.report
     if report is None:
-        body = """<section class="card"><div class="empty"><h3>No evaluation has been run</h3>
+        body = f"""<section class="card"><div class="empty"><h3>No evaluation has been run</h3>
 <p class="muted sm">It needs no API key. Results are kept until the dashboard stops.</p>
-<form method="post" action="/evaluate" data-busy-label="Running evaluation"><button
+<form method="post" action="{loc(snap, "/evaluate")}"
+data-busy-label="Running evaluation">{hidden_team(snap)}<button
 class="btn btn-primary" type="submit">Run evaluation</button></form></div></section>"""
     else:
         failures_only = query.get("show") == "failed"
@@ -1106,10 +1251,11 @@ class="sm">{case.tool_call_count}</td>
             )
         failing = report.failed
         toggle = (
-            '<a class="sm" href="/evaluation">Show all scenarios</a>'
+            f'<a class="sm" href="{loc(snap, "/evaluation")}">Show all scenarios</a>'
             if failures_only
             else (
-                '<a class="sm" href="/evaluation?show=failed">Show failures only</a>'
+                f'<a class="sm" href="{loc(snap, "/evaluation?show=failed")}">'
+                "Show failures only</a>"
                 if failing
                 else ""
             )
@@ -1124,7 +1270,8 @@ class="sm">{case.tool_call_count}</td>
   <div><p class="total">{report.passed} of {report.total} passed.</p><p
 class="muted sm">{report.pass_rate:.0%} pass rate, {report.elapsed_seconds:.2f} s</p></div>
   <div class="sm">{("Failed checks: " + e(breakdown)) if breakdown else "No failed checks."}</div>
-  <form method="post" action="/evaluate" data-busy-label="Running evaluation"><button
+  <form method="post" action="{loc(snap, "/evaluate")}"
+data-busy-label="Running evaluation">{hidden_team(snap)}<button
 class="btn btn-secondary" type="submit">Run again</button></form>
 </section>
 <section class="card" aria-labelledby="cases-heading">
@@ -1157,7 +1304,7 @@ def team_page(snap: Snapshot) -> Page:
         )
         rows.append(
             f"""<tr>
-  <td><a class="row-link" href="/team/{e(agent.name)}"><span
+  <td><a class="row-link" href="{loc(snap, f"/team/{agent.name}")}"><span
 class="strong">{e(title_name(agent.name))}</span></a><div
 class="xs muted">{e(agent.role)}</div></td>
   <td class="sm">{e(agent.job)}
@@ -1191,23 +1338,14 @@ model</th><th scope="col">Reads and returns</th><th scope="col">Allowed tools</t
 <div class="grid-main">
   <section class="card card-pad" aria-labelledby="routing-heading">
     <h2 id="routing-heading">How a request is handled</h2>
-    <ol class="todo sm">
-      <li>Alex classifies the request. Python routes it to Sam or Taylor and rejects any other
-name.</li>
-      <li>The specialist reads the business record with its allowed tool and drafts a response.</li>
-      <li>Jordan approves, rejects or escalates the draft.</li>
-      <li>If the specialist proposed a service action, the run pauses until you approve or reject
-it. <span class="mono">schedule_service</span> is on no agent's tool list.</li>
-      <li>An approved action is reserved before it is sent. If completion isn't recorded, it stays
-unresolved and is not sent again. This is not exactly-once delivery.</li>
-    </ol>
+    <ol class="todo sm">{"".join(f"<li>{e(step)}</li>" for step in snap.diagram.handling)}</ol>
   </section>
   <section class="card card-pad" aria-labelledby="storage-heading">
     <h2 id="storage-heading">Storage and privacy</h2>
     <p class="sm">{storage}</p>
-    <p class="sm muted">The audit ledger keeps argument hashes, never argument values. The customer
-reference and action arguments for a pending approval are kept in a separate local file so a
-restarted dashboard can resume it. API keys are never shown.</p>
+    <p class="sm muted">The audit ledger keeps argument hashes, never argument values. The reference
+and action arguments for a pending approval are kept in a separate local file so a restarted
+dashboard can resume it. API keys are never shown.</p>
   </section>
 </div>"""
     return Page(200, layout(snap, title="Team details", current="Team details", content=content))
@@ -1215,28 +1353,30 @@ restarted dashboard can resume it. API keys are never shown.</p>
 
 _NOTICES = {
     "connected": (
-        "Google Sheets is connected. Sam still uses demo data until you save connected mode."
+        "Google Sheets is connected. {reader} still uses demo data until you save connected mode."
     ),
     "denied": "The connection was not completed. No account was saved.",
     "checked": "The connected account is active. Spreadsheet cells were not read.",
     "unavailable": "The connected account is not available. Nothing was read.",
     "disconnected": (
-        "Disconnect removed the local connection and Sam's assignment. "
-        "It does not revoke Google access. If Sam was in connected mode, account "
-        "answers fail until you save a window again or explicitly choose demo data."
+        "Disconnect removed the local connection and every assignment that used it, "
+        "including another team's window. It does not revoke Google access. "
+        "Agents left in connected mode fail until you save a window again "
+        "or explicitly choose demo data."
     ),
     "assigned": (
-        "Sam is in connected mode. Account answers use the saved spreadsheet window. "
+        "{reader} is in connected mode. Answers use the saved spreadsheet window. "
         "A failed read does not return demo data."
     ),
-    "demo": "Sam is in demo mode. Account answers use fixture account A-100.",
+    "demo": "{reader} is in demo mode. Answers use the labelled fixture for this team.",
     "window": (
         "That range is larger than 100 rows, 26 columns, or 200 cells, or it is not "
         "one sheet range. The saved assignment was not changed."
     ),
     "unassigned": (
-        "The spreadsheet window was removed. Connected mode does not return demo "
-        "data until you explicitly choose it."
+        "This agent's spreadsheet window was removed. The Google account and any "
+        "other team's assignment stay in place. Connected mode does not return "
+        "demo data until you explicitly choose it."
     ),
     "unconfigured": (
         "Composio is not configured on this server. Add COMPOSIO_API_KEY to the server "
@@ -1261,14 +1401,16 @@ _NOTICES = {
 
 
 def connections_page(snap: Snapshot, query: Mapping[str, str]) -> Page:
-    notice = _notice(query.get("notice", ""))
-    rows = "".join(_connection_row(item) for item in snap.connections) or (
+    reader = title_name(snap.sheet_agent) or "The reader"
+    notice = _notice(snap, query.get("notice", ""))
+    rows = "".join(_connection_row(snap, item) for item in snap.connections) or (
         '<tr><td colspan="4" class="muted">No Google Sheets account is connected.</td></tr>'
     )
     if snap.composio_configured:
         connect = (
-            '<form method="post" action="/connections/connect" '
+            f'<form method="post" action="{loc(snap, "/connections/connect")}" '
             'data-busy-label="Opening sign-in">'
+            f"{hidden_team(snap)}"
             '<button class="btn btn-primary" type="submit">Connect Google Sheets</button></form>'
         )
     elif snap.composio_package_missing:
@@ -1291,14 +1433,14 @@ def connections_page(snap: Snapshot, query: Mapping[str, str]) -> Page:
         )
     content = f"""{notice}
 <header class="head"><div class="stack-xs"><h1>Connections</h1>
-<p class="muted">Connect one Google account, then save a spreadsheet and range on Sam's
+<p class="muted">Connect one Google account, then save a spreadsheet and range on {e(reader)}'s
 page. Demo mode stays available there and is labelled separately.</p></div>{connect}</header>
 <section class="card card-pad" aria-labelledby="scope-heading">
   <h2 id="scope-heading">What a connection allows</h2>
   <p class="sm">Sign-in opens Composio's hosted page and returns to this dashboard. This
 server then checks that the account belongs to this session. The only read is <span
 class="mono">GOOGLESHEETS_BATCH_GET</span>, pinned to toolkit version <span
-class="mono">20261101_00</span>. Sam's page saves the spreadsheet id and one range. The
+class="mono">20261101_00</span>. {e(reader)}'s page saves the spreadsheet id and one range. The
 server rejects any other spreadsheet, any range outside that window, and every write.
 Connecting does not give every agent access.</p>
   <p class="sm">The read this dashboard executes needs Google's spreadsheet read scope,
@@ -1306,11 +1448,12 @@ Connecting does not give every agent access.</p>
 Connect uses the custom auth config named by the server. Before sign-in, the server
 reads that config's metadata and requires the Google Sheets toolkit and only that
 scope. If the toolkit, the custom-app flag, or the scope list is missing, sign-in
-does not start. Composio's managed Google app is not used. Restricting Sam's tools
+does not start. Composio's managed Google app is not used. Restricting {e(reader)}'s tools
 does not change the Google grant. The consent screen is still the list you approve.</p>
-  <p class="sm muted">Disconnect removes the local connection and Sam's assignment. It does
-not revoke Google access. Revoke that in your Google account or in Composio. API keys and
-OAuth tokens are not shown.</p>
+  <p class="sm muted">Disconnect removes the local connection and every assignment that uses it,
+including another team's window. Removing an assignment on an agent page affects only that
+team and agent. It does not revoke Google access. Revoke that in your Google account or
+in Composio. API keys and OAuth tokens are not shown.</p>
 </section>
 <section class="card" aria-labelledby="accounts-heading">
   <div class="card-head"><h2 id="accounts-heading">Google Sheets</h2></div>
@@ -1328,30 +1471,42 @@ def agent_page(snap: Snapshot, name: str, query: Mapping[str, str]) -> Page:
     if agent is None:
         return not_found(snap)
     assignment = next((item for item in snap.assignments if item.agent_name == name), None)
-    notice = _notice(query.get("notice", ""))
+    notice = _notice(snap, query.get("notice", ""))
+    if name == snap.sheet_agent and snap.form == "operations":
+        fixture = (
+            "These tools come from team.json. Demo mode uses the labelled jobs. "
+            "A saved spreadsheet window replaces them for this agent only."
+        )
+    elif name == snap.sheet_agent:
+        fixture = (
+            "These tools come from team.json and read fixture data, including account A-100. "
+            "They answer only while this agent is in demo mode."
+        )
+    else:
+        fixture = (
+            "This agent does not read a spreadsheet. Its tools are the ones named in team.json."
+        )
     demo_tools = tuple(tool for tool in agent.tools if tool != "read_sheet_range")
     demo = (
         " ".join(f'<code class="tool">{e(tool)}</code>' for tool in demo_tools)
         if demo_tools
         else '<span class="muted">None</span>'
     )
-    if name != "sam":
+    if name != snap.sheet_agent:
         connected = (
-            '<p class="sm">Connected spreadsheet mode is on Sam\'s page. This agent keeps '
-            "its demo tools.</p>"
+            f'<p class="sm">Connected spreadsheet mode is on {e(title_name(snap.sheet_agent))}\'s '
+            "page. This agent keeps its demo tools.</p>"
         )
     else:
         connected = _sam_connection(snap, assignment)
     content = f"""{notice}
 <header class="head"><div class="stack-xs"><p class="muted"><a class="crumb"
-href="/team">{icon("back", 14)}Team details</a></p><h1>{e(title_name(name))}</h1>
+href="{loc(snap, "/team")}">{icon("back", 14)}Team details</a></p><h1>{e(title_name(name))}</h1>
 <p class="muted">{e(agent.job)}</p></div></header>
 <div class="grid-main">
   <section class="card card-pad" aria-labelledby="demo-tools-heading">
     <h2 id="demo-tools-heading">Demo mode</h2>
-    <p class="sm">These tools come from <span class="mono">team.json</span> and read fixture
-data, including account A-100. They answer only while this agent is in demo mode.
-Instructions are not edited here.</p>
+    <p class="sm">{e(fixture)} Instructions are not edited here.</p>
     <p>{demo}</p>
   </section>
   <section class="card card-pad" aria-labelledby="connected-heading">
@@ -1382,32 +1537,41 @@ def _sam_connection(snap: Snapshot, assignment: AssignmentInfo | None) -> str:
             f'<p class="sm">Saved window <span class="mono">{e(assignment.spreadsheet_id)}</span> '
             f'<span class="mono">{e(assignment.cell_range)}</span> on '
             f'<span class="strong">{e(assignment.label or "the connected account")}</span>.</p>'
-            """<form method="post" action="/connections/unassign">
-<input type="hidden" name="agent" value="sam">
+            f"""<form method="post" action="{loc(snap, "/connections/unassign")}">
+{hidden_team(snap)}
+<input type="hidden" name="agent" value="{e(snap.sheet_agent)}">
 <button class="btn btn-secondary" type="submit">Remove assignment</button></form>"""
         )
     options = "".join(
-        _connection_option(item) for item in snap.connections if item.status == "ACTIVE"
+        _connection_option(item, snap) for item in snap.connections if item.status == "ACTIVE"
     )
     spreadsheet = "" if assignment is None else assignment.spreadsheet_id
     cell_range = "" if assignment is None else assignment.cell_range
-    demo_form = """<form method="post" action="/connections/assign">
-<input type="hidden" name="agent" value="sam"><input type="hidden" name="mode" value="demo">
-<button class="btn btn-secondary" type="submit">Use demo account A-100</button></form>"""
+    demo_label = "Use demo jobs" if snap.form == "operations" else "Use demo account A-100"
+    placeholder = "Jobs!A1:D20" if snap.form == "operations" else "Accounts!A1:C2"
+    reader = title_name(snap.sheet_agent) or "The reader"
+    demo_form = f"""<form method="post" action="{loc(snap, "/connections/assign")}">
+{hidden_team(snap)}
+<input type="hidden" name="agent" value="{e(snap.sheet_agent)}">
+<input type="hidden" name="mode" value="demo">
+<button class="btn btn-secondary" type="submit">{e(demo_label)}</button></form>"""
     if not options:
         form = '<p class="sm muted">Connect Google Sheets before saving a spreadsheet window.</p>'
     else:
-        form = f"""<form method="post" action="/connections/assign" class="stack-s">
-<input type="hidden" name="agent" value="sam"><input type="hidden" name="mode" value="connected">
+        form = f"""<form method="post" action="{loc(snap, "/connections/assign")}" class="stack-s">
+{hidden_team(snap)}
+<input type="hidden" name="agent" value="{e(snap.sheet_agent)}">
+<input type="hidden" name="mode" value="connected">
 <label for="spreadsheet_id">Spreadsheet ID</label>
 <input id="spreadsheet_id" name="spreadsheet_id" value="{e(spreadsheet)}" required>
 <label for="cell_range">Sheet and range</label>
-<input id="cell_range" name="cell_range" value="{e(cell_range)}" placeholder="Accounts!A1:B20"
+<input id="cell_range" name="cell_range" value="{e(cell_range)}" placeholder="{placeholder}"
 required>
 <label for="connection_id">Connected account</label>
 <select id="connection_id" name="connection_id" required>{options}</select>
-<p class="xs muted">At most 100 rows, 26 columns, and 200 cells. Sam's account answers
-use this window. A missing connection or a failed read does not return demo data.</p>
+<p class="xs muted">At most 100 rows, 26 columns, and 200 cells. {reader}
+uses this window. Include every column that should be visible. A missing connection or a
+failed read does not return demo data.</p>
 <button class="btn btn-primary" type="submit">Use connected spreadsheet</button>
 </form>"""
     return f"""<p class="sm">Current mode: <span class="strong">{e(mode)}</span>.</p>
@@ -1417,27 +1581,45 @@ use this window. A missing connection or a failed read does not return demo data
 instructions.</p>"""
 
 
-def _connection_row(item: ConnectionInfo) -> str:
-    agents = ", ".join(title_name(name) for name in item.agents) if item.agents else "Not assigned"
+def _connection_row(snap: Snapshot, item: ConnectionInfo) -> str:
+    agents = (
+        ", ".join(_assignment_name(snap, name) for name in item.agents)
+        if item.agents
+        else "Not assigned"
+    )
     actions = ""
     if item.status == "ACTIVE":
-        actions = f"""<div class="row-s"><form method="post" action="/connections/test">
+        actions = f"""<div class="row-s">
+<form method="post" action="{loc(snap, "/connections/test")}">
+{hidden_team(snap)}
 <input type="hidden" name="connection_id" value="{e(item.connection_id)}">
 <button class="btn btn-secondary" type="submit">Test connection</button></form>
-<form method="post" action="/connections/disconnect">
+<form method="post" action="{loc(snap, "/connections/disconnect")}">
+{hidden_team(snap)}
 <input type="hidden" name="connection_id" value="{e(item.connection_id)}">
 <button class="btn btn-secondary" type="submit">Disconnect</button></form></div>"""
     return f"""<tr>
   <td><span class="strong">{e(item.label)}</span><div class="xs muted">Google Sheets</div></td>
   <td>{_connection_status(item.status)}</td>
   <td class="sm">{e(agents)}</td>
-  <td>{actions}<p class="xs muted">Disconnect removes the local connection and assignments.
-It does not revoke Google access. Connected mode does not fall back to demo data.</p></td>
+  <td>{actions}<p class="xs muted">Disconnect removes the local connection and every assignment
+that uses it. An agent page removes only that team's window. Neither revokes Google access.
+Connected mode does not fall back to demo data.</p></td>
 </tr>"""
 
 
-def _connection_option(item: ConnectionInfo) -> str:
-    agents = ", ".join(title_name(name) for name in item.agents) or "no agents yet"
+def _assignment_name(snap: Snapshot, token: str) -> str:
+    """Show a team title and agent. Stored tokens are team-id/agent-name."""
+    team_id, separator, agent = token.partition("/")
+    if not separator:
+        return title_name(token)
+    titles = dict(snap.installed)
+    team = titles.get(team_id) or title_name(team_id.replace("-", " "))
+    return f"{team} / {title_name(agent)}"
+
+
+def _connection_option(item: ConnectionInfo, snap: Snapshot) -> str:
+    agents = ", ".join(_assignment_name(snap, name) for name in item.agents) or "no agents yet"
     return f'<option value="{e(item.connection_id)}">{e(item.label)} ({e(agents)})</option>'
 
 
@@ -1451,20 +1633,22 @@ def _connection_status(value: str) -> str:
     return status("failed", "Unavailable")
 
 
-def _notice(code: str) -> str:
+def _notice(snap: Snapshot, code: str) -> str:
     text = _NOTICES.get(code, "")
     if not text:
         return ""
-    return f'<div class="note" role="status">{icon("info")}<p>{e(text)}</p></div>'
+    reader = title_name(snap.sheet_agent) or "The reader"
+    shown = text.format(reader=reader)
+    return f'<div class="note" role="status">{icon("info")}<p>{e(shown)}</p></div>'
 
 
 # ---------------------------------------------------------------- routing
 
 
 def not_found(snap: Snapshot) -> Page:
-    content = """<header class="head"><div class="stack-xs"><h1>Page not found</h1>
+    content = f"""<header class="head"><div class="stack-xs"><h1>Page not found</h1>
 <p class="muted">That page or run doesn't exist in this dashboard.</p></div></header>
-<p><a class="btn btn-secondary" href="/">Back to overview</a></p>"""
+<p><a class="btn btn-secondary" href="{loc(snap, "/")}">Back to overview</a></p>"""
     return Page(404, layout(snap, title="Not found", current="", content=content))
 
 

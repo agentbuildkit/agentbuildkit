@@ -6,7 +6,7 @@ names each state for a person. Missing facts stay missing.
 """
 
 from collections import Counter, deque
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -40,7 +40,6 @@ State = Literal[
     "not_run",
 ]
 Tone = Literal["wait", "done", "fail", "neutral", "unres"]
-NodeState = Literal["recorded", "waiting", "failed", "unknown", "idle"]
 Category = Literal["agent", "tool", "approval", "effect", "workflow"]
 
 
@@ -318,91 +317,6 @@ def merge_audit(
         else:
             items.append(_from_event(event))
     return tuple(items)
-
-
-@dataclass(frozen=True)
-class RouteNode:
-    name: str
-    caption: str
-    state: NodeState
-    mono: bool = False
-
-
-@dataclass(frozen=True)
-class Route:
-    """The six steps on the main path plus the specialist this run did not use."""
-
-    main: tuple[RouteNode, ...]
-    other: RouteNode
-
-
-SPECIALISTS = ("sam", "taylor")
-_ACTIVE: frozenset[NodeState] = frozenset({"recorded", "waiting", "failed", "unknown"})
-
-
-def build_route(run: Run, items: Iterable[AuditItem]) -> Route:
-    """Mark what this run recorded. Configured steps it did not reach stay idle."""
-    events = [item for item in items if item.correlation_id == run.correlation_id]
-    ran = {item.agent for item in events if item.is_agent_run and item.agent}
-    state = run.state
-    routed = run.specialist in SPECIALISTS
-    request = RouteNode("Request", run.reference or "No reference", "recorded")
-    if state == "not_routed":
-        alex = RouteNode("Alex", "Named no valid specialist", "recorded")
-    elif routed:
-        alex = RouteNode("Alex", f"Routed to {run.specialist.title()}", "recorded")
-    elif "alex" in ran:
-        alex = RouteNode("Alex", "Ran", "recorded")
-    else:
-        alex = RouteNode("Alex", "Not recorded", "idle")
-    taken = run.specialist if routed else "taylor"
-    other_name = "sam" if taken == "taylor" else "taylor"
-    if routed:
-        tools = [
-            item.tool
-            for item in events
-            if item.agent == taken and item.category == "tool" and item.approval != "rejected"
-        ]
-        caption = ", ".join(dict.fromkeys(tools)) if tools else "Proposed a response"
-        specialist = RouteNode(taken.title(), caption, "recorded")
-    else:
-        specialist = RouteNode(taken.title(), "Not used", "idle")
-    other = RouteNode(other_name.title(), "Configured, not used", "idle")
-    if not routed:
-        jordan = RouteNode("Jordan", "Not reached", "idle")
-    elif state == "review_rejected":
-        jordan = RouteNode("Jordan", "Rejected the draft", "recorded")
-    elif state == "escalated":
-        jordan = RouteNode("Jordan", "Escalated", "recorded")
-    else:
-        jordan = RouteNode("Jordan", "Approved the draft", "recorded")
-    paused = run.pause is not None or any(item.kind == "workflow_paused" for item in events)
-    if not paused:
-        reached = routed and state not in {"review_rejected", "escalated"}
-        caption = "Not needed" if reached else "Not reached"
-        person = RouteNode("You", caption, "idle")
-        effect = RouteNode("schedule_service", caption, "idle", mono=True)
-    elif state == "waiting":
-        person = RouteNode("You", "Waiting for you", "waiting")
-        effect = RouteNode("schedule_service", "Not sent yet", "idle", mono=True)
-    elif state == "declined":
-        person = RouteNode("You", "Rejected", "recorded")
-        effect = RouteNode("schedule_service", "Not sent", "idle", mono=True)
-    elif state == "failed":
-        person = RouteNode("You", "Approved", "recorded")
-        effect = RouteNode("schedule_service", "Ended with an error", "failed", mono=True)
-    elif state == "unresolved":
-        person = RouteNode("You", "Approved", "recorded")
-        effect = RouteNode("schedule_service", "Started, not confirmed", "unknown", mono=True)
-    else:
-        person = RouteNode("You", "Approved", "recorded")
-        effect = RouteNode("schedule_service", "Completion recorded", "recorded", mono=True)
-    return Route(main=(request, alex, specialist, jordan, person, effect), other=other)
-
-
-def link_on(left: RouteNode, right: RouteNode) -> bool:
-    """A connector is solid only between two steps the run reached."""
-    return left.state in _ACTIVE and right.state in _ACTIVE
 
 
 def clock(value: str | None) -> str | None:

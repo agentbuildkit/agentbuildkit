@@ -109,7 +109,7 @@ That is the production harness running locally, with the model text supplied by 
 
 This release includes the Python package `agentbuildkit`, the `agentkit` command, and the Node bootstrapper in `npm/agentbuildkit`. Microsoft Foundry is an optional extra and is not installed by a normal sync.
 
-Skills and persistent agent memory are not in this release. The harness loads declarative team bundles. The customer-service example includes a local dashboard over its existing service. That dashboard can optionally connect Google Sheets through Composio. Sam can stay on the labelled demo fixture or read one saved spreadsheet window. The key stays on the server.
+Skills and persistent agent memory are not in this release. The harness loads declarative team bundles. One local dashboard installs Customer Service and Operations Reporting. Each team keeps its own runs, approvals, audit, and spreadsheet window. Google Sheets stays optional, and the key stays on the server.
 
 `examples/customer_service` is a separate example with fixture data. It is not the offline demo and it is not part of the installed package.
 

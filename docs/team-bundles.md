@@ -10,7 +10,9 @@ agentkit team validate examples/customer_service/team.json
 Each agent declares its name, purpose, instructions, provider, model, input and
 output schema names, and tool allowlist. Version 1 supports `openai` and
 `anthropic`; agents can mix them. Unknown fields, empty required text, duplicate
-agent names and duplicate tool references are rejected.
+agent names and duplicate tool references are rejected. Optional `id` and
+`title` separate the stable team id from the name shown in the dashboard. When
+they are omitted, both stay equal to `name`.
 
 Applications load a bundle with `agentbuildkit.teams.load_bundle(path)` and call
 `bundle.definitions(schemas=schemas, tools=tools)`. Both registries are explicit

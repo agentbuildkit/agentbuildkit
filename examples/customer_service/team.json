@@ -1,5 +1,7 @@
 {
   "schema_version": "1",
+  "id": "customer-service",
+  "title": "Customer Service",
   "name": "customer-service",
   "agents": [
     {

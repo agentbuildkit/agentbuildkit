@@ -21,6 +21,7 @@ from agentbuildkit.config import AppSettings
 from agentbuildkit.observability import AuditLog, configure_observability
 from agentbuildkit.providers import ProviderConfiguration, ProviderRegistry, builtin_registry
 from agentbuildkit.teams import TeamBundle, load_bundle
+from agentbuildkit.workflows.diagram import DiagramChoice, DiagramStep, WorkflowDiagram
 from customer_service.business import BusinessSystem
 from customer_service.models import (
     CustomerRequest,
@@ -35,6 +36,31 @@ TAYLOR = "taylor"
 JORDAN = "jordan"
 ROUTE_WORKFLOW = "customer-route"
 ACTION_WORKFLOW = "service-action"
+CUSTOMER_DIAGRAM = WorkflowDiagram(
+    stages=(
+        DiagramStep("request", "Request", "entry"),
+        DiagramStep(ALEX, "Alex", "agent"),
+        DiagramChoice(
+            (
+                DiagramStep(SAM, "Sam", "agent"),
+                DiagramStep(TAYLOR, "Taylor", "agent"),
+            )
+        ),
+        DiagramStep(JORDAN, "Jordan", "agent"),
+        DiagramStep("you", "You", "person"),
+        DiagramStep("schedule_service", "schedule_service", "effect", mono=True),
+    ),
+    handling=(
+        "Alex classifies the request. Python routes it to Sam or Taylor and rejects any other "
+        "name.",
+        "The specialist reads the business record with its allowed tool and drafts a response.",
+        "Jordan approves, rejects or escalates the draft.",
+        "If the specialist proposed a service action, the run pauses until you approve or "
+        "reject it. schedule_service is on no agent's tool list.",
+        "An approved action is reserved before it is sent. If completion isn't recorded, it stays "
+        "unresolved and is not sent again. This is not exactly-once delivery.",
+    ),
+)
 ORGANISATION_SCOPE = "customer-service"
 BUNDLE_PATH = Path(__file__).with_name("team.json")
 _SCHEMAS: dict[str, type[BaseModel]] = {
