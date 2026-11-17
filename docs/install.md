@@ -1,47 +1,88 @@
-# Install from local artifacts
+# Install
 
-The published `agentbuildkit` 0.1.0 package and the published `npx agentbuildkit`
-package install the harness only. They provide `agentkit version`, `agentkit
-doctor`, and `agentkit demo`. They do not provide the dashboard or the drafting
-server. The commands in this page are for wheels built from this repository.
-They are not PyPI or `npx` commands until a later release.
+The commands labelled **upcoming 0.2.0** are the release being prepared.
+They are not on PyPI or npm yet. The public index still has `agentbuildkit`
+0.1.0 and npm `agentbuildkit` 0.0.2. Those published packages install the
+harness only.
 
-## Packages
-
-`agentbuildkit` is the harness. It does not contain the customer-service or
-operations-reporting applications.
-
-`agentbuildkit-templates` is the first-party package built from `examples/`.
-Its import name is `agentbuildkit_templates`. That package contains
-`agentbuildkit_templates.office`, `agentbuildkit_templates.customer_service`,
-and `agentbuildkit_templates.operations_reporting`, including the dashboard
-files, team bundles, fonts, and fixture data. The harness imports
-`agentbuildkit_templates` by that name. It does not search the environment
-for other template packages and it does not install a top-level `office`,
-`customer_service`, or `operations_reporting` module.
-
-The two local artifacts currently share version 0.1.0 with each other and
-with the published harness. That shared version is not a compatibility
-promise. The templates call harness capabilities that the published 0.1.0
-package does not have: packaged team JSON loading, the revision service, the
-POSIX startup lock error, the drafting server, and rendered dashboard pages.
-Importing `agentbuildkit_templates` checks for those capabilities and stops
-with an install instruction when any are missing.
-
-`HARNESS_RELEASE_BOUND` is empty on purpose. Before `agentbuildkit-templates`
-is published, its dependency must require at least the first harness release
-that includes those capabilities. That version has not been chosen or
-released. There is no public install command for this pair of packages. Do
-not install the published `agentbuildkit` 0.1.0 package and expect it to run
-these templates.
+`agentbuildkit` 0.2.0 is the harness. `agentbuildkit-templates` 0.2.0 is the
+first-party package. Its import name is `agentbuildkit_templates`. The
+templates package requires `agentbuildkit>=0.2.0,<0.3.0`. Importing it also
+checks for packaged team JSON loading, the revision service, the POSIX
+startup lock error, the drafting server, and rendered dashboard pages. The
+published 0.1.0 harness does not provide those capabilities.
 
 Composio and Microsoft Foundry stay optional extras of `agentbuildkit`. The
-templates package does not require either one.
+bootstrapper and the default Python install do not install them.
 
-The revision database startup lock uses POSIX `flock`. A platform without
-`fcntl` gets a clear error. Windows has not been verified.
+The revision database startup lock uses POSIX `flock`. Dashboard and MCP
+startup fail with an actionable message on a platform without `fcntl`.
+Windows has not been verified. Other harness commands that do not open that
+lock are unchanged.
 
-## Build
+## Upcoming 0.2.0 commands
+
+These commands apply after publication. They do not work against today's
+public index.
+
+Default npm installation and dashboard launch:
+
+```bash
+npx agentbuildkit@0.0.3
+```
+
+An interactive terminal explains the state directory, offers the local
+dashboard, and then offers the offline demo. The dashboard stays in that
+terminal. Press Ctrl+C to stop it. Neither step calls a model. A
+non-interactive run prints that it skipped both and does not wait.
+
+Python installation of the full local product, after publication:
+
+```bash
+uv tool install --python 3.12 --managed-python \
+  --with "agentbuildkit-templates>=0.2.0,<0.3.0" \
+  "agentbuildkit>=0.2.0,<0.3.0"
+```
+
+Harness-only installation stays available through Python:
+
+```bash
+uv tool install --python 3.12 --managed-python "agentbuildkit>=0.2.0,<0.3.0"
+```
+
+Optional Composio installation:
+
+```bash
+uv tool install --python 3.12 --managed-python \
+  --with "agentbuildkit-templates>=0.2.0,<0.3.0" \
+  "agentbuildkit[composio]>=0.2.0,<0.3.0"
+```
+
+Dashboard and MCP with an explicit durable state directory:
+
+```bash
+agentkit dashboard --state-directory /ABSOLUTE/PATH/agentbuildkit-state
+agentkit mcp serve --state-directory /ABSOLUTE/PATH/agentbuildkit-state
+```
+
+MCP requires an absolute path and does not read `APP_STATE_DIRECTORY`.
+
+Upgrading a harness-only installation. The upcoming npm package detects a
+tool install that does not report the templates package and reinstalls both:
+
+```bash
+npx agentbuildkit@0.0.3
+```
+
+The same upgrade through Python:
+
+```bash
+uv tool install --force --python 3.12 --managed-python \
+  --with "agentbuildkit-templates>=0.2.0,<0.3.0" \
+  "agentbuildkit>=0.2.0,<0.3.0"
+```
+
+## Build local candidate artifacts
 
 From the repository root:
 
@@ -49,7 +90,7 @@ From the repository root:
 uv build --all-packages --out-dir dist
 ```
 
-That writes `dist/agentbuildkit-0.1.0-*.whl`, its source distribution, and the
+That writes `dist/agentbuildkit-0.2.0-*.whl`, its source distribution, and the
 same two artifacts for `agentbuildkit-templates`.
 
 ## Install both local artifacts
@@ -60,24 +101,21 @@ add `--no-deps` and do not install the packages in separate commands.
 ```bash
 uv venv /tmp/agentbuildkit-clean --python 3.12
 uv pip install --python /tmp/agentbuildkit-clean/bin/python \
-  dist/agentbuildkit-0.1.0-*.whl \
-  dist/agentbuildkit_templates-0.1.0-*.whl
+  dist/agentbuildkit-0.2.0-*.whl \
+  dist/agentbuildkit_templates-0.2.0-*.whl
 ```
 
 The same command works with the two `.tar.gz` source distributions. Installing
 from a source distribution builds it from the archive and its declared
-dependencies. It does not use this checkout. This command is for artifacts
-built from this repository. It is not a public install command. The published
-`agentbuildkit` 0.1.0 package cannot satisfy these templates, even though the
-local artifacts use the same version string.
+dependencies. It does not use this checkout. This command uses artifacts
+built from this repository. It is not a public install command.
 
-Optional Composio support, still without publishing. Install the extra from
-the local harness artifact in the same command as the templates package:
+Optional Composio support from the local harness artifact:
 
 ```bash
 uv pip install --python /tmp/agentbuildkit-clean/bin/python \
-  "agentbuildkit[composio] @ dist/agentbuildkit-0.1.0-py3-none-any.whl" \
-  dist/agentbuildkit_templates-0.1.0-py3-none-any.whl
+  "agentbuildkit[composio] @ dist/agentbuildkit-0.2.0-py3-none-any.whl" \
+  dist/agentbuildkit_templates-0.2.0-py3-none-any.whl
 ```
 
 A missing `composio` package does not stop the dashboard. Connect stays
@@ -149,15 +187,17 @@ entry. See [MCP](mcp.md). Claude Desktop was not tested.
 
 ## npm bootstrapper
 
-`npx agentbuildkit` installs the published harness. It does not install
-`agentbuildkit-templates`.
+The published `npx agentbuildkit` package is 0.0.2. It installs the harness
+only. The upcoming 0.0.3 package installs `agentbuildkit>=0.2.0,<0.3.0` and
+`agentbuildkit-templates>=0.2.0,<0.3.0`, runs `agentkit doctor`, explains the
+state directory, and can open the dashboard in the foreground. It does not
+install Composio or Foundry and it does not start a live model call.
 
-From this repository, the local bootstrapper installs both the checkout and
-`examples/`:
+From this repository, before publication:
 
 ```bash
-node npm/agentbuildkit/bin/agentbuildkit.js --source local --no-demo
+node npm/agentbuildkit/bin/agentbuildkit.js --source local --no-demo --no-dashboard
 ```
 
-That is a checkout install. It is not proof that the published npm package
-can start the dashboard.
+`--source local` installs this checkout and `examples/`. It is a checkout
+install. It is not the published npm package.

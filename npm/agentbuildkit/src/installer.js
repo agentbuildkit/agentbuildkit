@@ -3,30 +3,39 @@
 const path = require("node:path");
 
 const { BootstrapError } = require("./errors");
-const { installArguments, toolIsInstalled } = require("./source");
+const { installArguments, templatesReady, toolIsInstalled } = require("./source");
 
-async function installProduct({ uv, source, upgrade, run, log }) {
+async function installProduct({ uv, source, upgrade, run, log, locate }) {
   const listed = await run(uv, ["tool", "list"]);
   if (listed.code !== 0) {
     throw new BootstrapError(failureDetail("uv could not list installed tools.", listed));
   }
   const present = toolIsInstalled(listed.stdout);
-  if (present && !upgrade) {
-    return { already: true };
+  let force = Boolean(upgrade);
+  if (present && !force) {
+    const agentkit = await locate();
+    const probe = await run(agentkit.command, ["doctor"]);
+    if (probe.code !== 0 || !templatesReady(probe.stdout)) {
+      log("An older harness-only installation is missing the templates package.");
+      log("Installing the compatible harness and templates.");
+      force = true;
+    } else {
+      return { already: true };
+    }
   }
   if (source.kind === "local") {
     log("Installing AgentBuildKit from the local repository.");
   } else {
     log("Installing AgentBuildKit with uv.");
   }
-  const result = await run(uv, installArguments(source, { upgrade: present || upgrade }));
+  const result = await run(uv, installArguments(source, { upgrade: present || force }));
   if (result.code !== 0) {
-    if (/already installed/i.test(`${result.stdout}\n${result.stderr}`) && !upgrade) {
+    if (/already installed/i.test(`${result.stdout}\n${result.stderr}`) && !force) {
       return { already: true };
     }
     throw new BootstrapError(failureDetail("AgentBuildKit could not be installed.", result));
   }
-  return { already: false };
+  return { already: false, upgraded: force && present };
 }
 
 async function locateAgentkit({ uv, run, find }) {

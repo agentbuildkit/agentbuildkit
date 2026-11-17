@@ -8,10 +8,7 @@ accepted package.
 import importlib.util
 
 TEMPLATES_MODULE = "agentbuildkit_templates"
-# Release preparation. The templates package records the same empty bound.
-# Set both to the first harness release that includes the template host
-# capabilities. The published 0.1.0 harness is not that release.
-HARNESS_RELEASE_BOUND = ""
+HARNESS_RELEASE_BOUND = "agentbuildkit>=0.2.0,<0.3.0"
 
 
 def templates_available() -> bool:
@@ -23,9 +20,11 @@ def templates_missing_message() -> str:
     """Tell the operator how to add the dashboard and drafting server."""
     return (
         "The dashboard and local drafting server are in the agentbuildkit-templates "
-        "package. Install that package in this environment. The published "
-        "agentbuildkit 0.1.0 package and the published npx agentbuildkit package "
-        "do not include it."
+        "package. Install agentbuildkit>=0.2.0,<0.3.0 and "
+        "agentbuildkit-templates>=0.2.0,<0.3.0 together. The published "
+        "agentbuildkit 0.1.0 package and the published npx agentbuildkit 0.0.2 "
+        "package do not include the templates. Those 0.2.0 commands are the "
+        "upcoming release and are not on the public index yet."
     )
 
 

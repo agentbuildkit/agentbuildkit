@@ -1,6 +1,6 @@
 [project]
 name = "agentbuildkit"
-version = "0.1.0"
+version = "0.2.0"
 description = "Open-source Python harness for building reliable AI agents."
 readme = "README.md"
 license = "Apache-2.0"
@@ -62,7 +62,7 @@ packages = ["src/agentbuildkit"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "examples"]
+pythonpath = ["src", "examples", "."]
 addopts = "-q"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -91,6 +91,6 @@ known-first-party = [
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 include = ["src", "examples", "tests"]
-extraPaths = ["src", "examples"]
+extraPaths = ["src", "examples", "."]
 venvPath = "."
 venv = ".venv"

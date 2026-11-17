@@ -1,0 +1,87 @@
+# Build and test one release candidate. This workflow cannot publish.
+# It has no id-token permission and no registry upload.
+# actions: write is only for uploading the candidate artifact.
+
+name: Release validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type validate. This workflow does not publish.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  validate:
+    name: Build and test the candidate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse a confirmation that is not validate
+        if: inputs.confirm != 'validate'
+        run: |
+          echo "Type validate. This workflow does not publish."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Check version metadata
+        run: |
+          python - << 'PY'
+          import json
+          import pathlib
+          import tomllib
+          from scripts.release_gate import HARNESS_BOUND, versions_match
+          harness = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]
+          templates = tomllib.loads(pathlib.Path("examples/pyproject.toml").read_text())["project"]
+          npm_version = json.loads(pathlib.Path("npm/agentbuildkit/package.json").read_text())["version"]
+          bound = templates["dependencies"][0]
+          if not versions_match(harness["version"], templates["version"], npm_version, bound):
+              raise SystemExit(
+                  f"version mismatch: {harness['version']} {templates['version']} {npm_version} {bound}"
+              )
+          if bound != HARNESS_BOUND:
+              raise SystemExit(bound)
+          PY
+
+      - name: Build both Python distributions
+        run: uv build --all-packages --out-dir build/python
+
+      - name: Pack the npm bootstrapper
+        working-directory: npm/agentbuildkit
+        run: npm pack --pack-destination "$GITHUB_WORKSPACE/build/npm"
+
+      - name: Assemble the candidate
+        run: |
+          mkdir -p candidate
+          find build/python build/npm -type f \( -name '*.whl' -o -name '*.tar.gz' -o -name '*.tgz' \) -exec cp {} candidate/ \;
+          test "$(find candidate -type f | wc -l)" -eq 5
+
+      - name: Install dependencies
+        run: uv sync --locked --all-groups --no-extra foundry
+
+      - name: Test these exact artifacts
+        run: AGENTBUILDKIT_ARTIFACTS="$GITHUB_WORKSPACE/candidate" uv run pytest tests/unit/test_installed_distribution.py tests/unit/test_release_gate.py
+
+      - name: Write the manifest
+        run: PYTHONPATH=. python scripts/release_candidate.py write candidate
+
+      - name: Upload the candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate
+          path: candidate/
+          retention-days: 14
+          if-no-files-found: error

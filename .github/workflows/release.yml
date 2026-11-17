@@ -1,43 +1,246 @@
-# Publishes agentbuildkit when a GitHub Release is published from a v* tag.
-# The package version comes from pyproject.toml. PyPI authentication is
-# Trusted Publishing through GitHub OIDC. This workflow stores no PyPI token.
+# Publish from a previously validated candidate. A branch push, pull request,
+# merge, or GitHub Release does not run this workflow.
+# The confirm input only selects the job. It is not an approval.
+# Publish jobs use GitHub environments limited to the master branch.
+# This repository's plan cannot require a reviewer on those environments.
 
-name: Publish to PyPI
+name: Release
 
 on:
-  release:
-    types:
-      - published
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: publish-harness, publish-templates, verify-python, publish-npm, or verify-npm
+        required: true
+        type: choice
+        options:
+          - publish-harness
+          - publish-templates
+          - verify-python
+          - publish-npm
+          - verify-npm
+      confirm:
+        description: Type the stage name again. This selects the job and is not an approval.
+        required: true
+        type: string
+      validation_run:
+        description: Successful Release validation run id. Missing artifacts require a new validation.
+        required: true
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  publish:
-    name: Publish agentbuildkit to PyPI
-    if: startsWith(github.event.release.tag_name, 'v')
+  publish-harness:
+    name: Publish the harness
+    if: inputs.stage == 'publish-harness' && inputs.confirm == 'publish-harness'
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/agentbuildkit
     permissions:
       contents: read
+      actions: read
       id-token: write
       attestations: write
     steps:
-      - name: Checkout release
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
           persist-credentials: false
+      - name: Download the validated candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: release-candidate
+          path: candidate
+          run-id: ${{ inputs.validation_run }}
+          github-token: ${{ github.token }}
+      - name: Require the candidate from this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATION_RUN: ${{ inputs.validation_run }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${VALIDATION_RUN}" > run.json
+          PYTHONPATH=. python scripts/release_candidate.py verify-run run.json "$GITHUB_SHA"
+          PYTHONPATH=. python scripts/release_candidate.py verify-files candidate "$GITHUB_SHA" "$VALIDATION_RUN"
+      - name: Compare the harness and stop on a mismatch
+        id: remote
+        run: |
+          mkdir -p publish
+          cp candidate/agentbuildkit-0.2.0-*.whl candidate/agentbuildkit-0.2.0.tar.gz publish/
+          PYTHONPATH=. python scripts/release_publish.py harness publish
+      - name: Publish the harness when it is absent
+        if: steps.remote.outputs.decision == 'absent'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: publish
 
+  publish-templates:
+    name: Publish the templates
+    if: inputs.stage == 'publish-templates' && inputs.confirm == 'publish-templates'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-templates
+      url: https://pypi.org/p/agentbuildkit-templates
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download the validated candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: release-candidate
+          path: candidate
+          run-id: ${{ inputs.validation_run }}
+          github-token: ${{ github.token }}
+      - name: Require the candidate from this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATION_RUN: ${{ inputs.validation_run }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${VALIDATION_RUN}" > run.json
+          PYTHONPATH=. python scripts/release_candidate.py verify-run run.json "$GITHUB_SHA"
+          PYTHONPATH=. python scripts/release_candidate.py verify-files candidate "$GITHUB_SHA" "$VALIDATION_RUN"
+      - name: Require the published harness to match this candidate
+        run: PYTHONPATH=. python scripts/release_publish.py harness candidate require-match
+      - name: Compare the templates and stop on a mismatch
+        id: remote
+        run: |
+          mkdir -p publish
+          cp candidate/agentbuildkit_templates-0.2.0-*.whl candidate/agentbuildkit_templates-0.2.0.tar.gz publish/
+          PYTHONPATH=. python scripts/release_publish.py templates publish
+      - name: Publish the templates when they are absent
+        if: steps.remote.outputs.decision == 'absent'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: publish
+
+  verify-python:
+    name: Verify the public Python install
+    if: inputs.stage == 'verify-python' && inputs.confirm == 'verify-python'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download the validated candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: release-candidate
+          path: candidate
+          run-id: ${{ inputs.validation_run }}
+          github-token: ${{ github.token }}
+      - name: Require the candidate from this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATION_RUN: ${{ inputs.validation_run }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${VALIDATION_RUN}" > run.json
+          PYTHONPATH=. python scripts/release_candidate.py verify-run run.json "$GITHUB_SHA"
+          PYTHONPATH=. python scripts/release_candidate.py verify-files candidate "$GITHUB_SHA" "$VALIDATION_RUN"
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.12"
+      - name: Require the public files to match the candidate
+        run: |
+          PYTHONPATH=. python scripts/release_publish.py harness candidate require-match
+          PYTHONPATH=. python scripts/release_publish.py templates candidate require-match
+      - name: Install the published pair and run offline checks
+        run: |
+          uv venv /tmp/agentbuildkit-public --python 3.12
+          uv pip install --python /tmp/agentbuildkit-public/bin/python \
+            "agentbuildkit==0.2.0" "agentbuildkit-templates==0.2.0"
+          /tmp/agentbuildkit-public/bin/agentkit version
+          /tmp/agentbuildkit-public/bin/agentkit doctor
+          /tmp/agentbuildkit-public/bin/agentkit demo --approve
 
-      - name: Build wheel and sdist
-        run: uv build
+  publish-npm:
+    name: Publish the npm bootstrapper
+    if: inputs.stage == 'publish-npm' && inputs.confirm == 'publish-npm'
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/agentbuildkit
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download the validated candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: release-candidate
+          path: candidate
+          run-id: ${{ inputs.validation_run }}
+          github-token: ${{ github.token }}
+      - name: Require the candidate from this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATION_RUN: ${{ inputs.validation_run }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${VALIDATION_RUN}" > run.json
+          PYTHONPATH=. python scripts/release_candidate.py verify-run run.json "$GITHUB_SHA"
+          PYTHONPATH=. python scripts/release_candidate.py verify-files candidate "$GITHUB_SHA" "$VALIDATION_RUN"
+      - name: Require both public Python packages to match this candidate
+        run: |
+          PYTHONPATH=. python scripts/release_publish.py harness candidate require-match
+          PYTHONPATH=. python scripts/release_publish.py templates candidate require-match
+      - name: Install Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Compare the validated tarball and stop on a mismatch
+        id: remote
+        run: node scripts/release_npm.js candidate/agentbuildkit-0.0.3.tgz
+      - name: Publish the validated tarball when it is absent
+        if: steps.remote.outputs.decision == 'absent'
+        run: npm publish --provenance --access public candidate/agentbuildkit-0.0.3.tgz
 
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+  verify-npm:
+    name: Verify the public npm install
+    if: inputs.stage == 'verify-npm' && inputs.confirm == 'verify-npm'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download the validated candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: release-candidate
+          path: candidate
+          run-id: ${{ inputs.validation_run }}
+          github-token: ${{ github.token }}
+      - name: Require the candidate from this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATION_RUN: ${{ inputs.validation_run }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${VALIDATION_RUN}" > run.json
+          PYTHONPATH=. python scripts/release_candidate.py verify-run run.json "$GITHUB_SHA"
+          PYTHONPATH=. python scripts/release_candidate.py verify-files candidate "$GITHUB_SHA" "$VALIDATION_RUN"
+      - name: Install Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Require the public tarball to match the candidate
+        run: node scripts/release_npm.js candidate/agentbuildkit-0.0.3.tgz --require-match
+      - name: Run the published help command
+        run: npx --yes agentbuildkit@0.0.3 --help

@@ -91,7 +91,7 @@ wheels = [
 
 [[package]]
 name = "agentbuildkit"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "agent-framework-anthropic" },
@@ -147,7 +147,7 @@ dev = [
 
 [[package]]
 name = "agentbuildkit-templates"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "examples" }
 dependencies = [
     { name = "agentbuildkit" },

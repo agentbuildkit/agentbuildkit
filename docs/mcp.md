@@ -15,13 +15,15 @@ tested. A client that can only connect to a remote HTTP or OAuth server cannot
 use this milestone.
 
 The server needs POSIX file locking (`flock`) for the revision database.
-Platforms without `fcntl` are refused. Windows has not been verified.
+Dashboard and MCP startup fail with an actionable message when `fcntl` is
+unavailable. Windows has not been verified. Harness commands that do not open
+that lock are unchanged.
 
-Two ways to start it are covered below. A checkout command uses this
-repository. An installed command uses wheels built from this repository. The
-published `agentbuildkit` 0.1.0 package and the published `npx agentbuildkit`
-package do not include `agentkit mcp` or the templates. Installing the current
-package from PyPI does not add the command.
+The published `agentbuildkit` 0.1.0 package and the published
+`npx agentbuildkit` 0.0.2 package do not include `agentkit mcp` or the
+templates. The upcoming 0.2.0 commands in [Install](install.md) are not on
+the public index yet. A checkout command uses this repository. An installed
+command uses wheels built from this repository.
 
 ## Launch
 
