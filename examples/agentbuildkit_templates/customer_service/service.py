@@ -26,14 +26,18 @@ from agentbuildkit.workflows import (
     resume_approval,
     run_workflow,
 )
-from customer_service.models import (
+from agentbuildkit_templates.customer_service.models import (
     CustomerRequest,
     FinalOutcome,
     OutcomeStatus,
     ProposedResponse,
     ServiceActionRequest,
 )
-from customer_service.team import ACTION_WORKFLOW, ROUTE_WORKFLOW, Organisation
+from agentbuildkit_templates.customer_service.team import (
+    ACTION_WORKFLOW,
+    ROUTE_WORKFLOW,
+    Organisation,
+)
 
 _UNROUTED = "The request could not be routed."
 _REJECTED = "The proposed response was not accepted."

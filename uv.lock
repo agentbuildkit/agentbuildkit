@@ -10,6 +10,12 @@ resolution-markers = [
     "python_full_version < '3.13' and sys_platform != 'win32'",
 ]
 
+[manifest]
+members = [
+    "agentbuildkit",
+    "agentbuildkit-templates",
+]
+
 [[package]]
 name = "agent-framework-anthropic"
 version = "1.0.0b261022"
@@ -138,6 +144,17 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=0.25" },
     { name = "ruff", specifier = ">=0.12" },
 ]
+
+[[package]]
+name = "agentbuildkit-templates"
+version = "0.1.0"
+source = { editable = "examples" }
+dependencies = [
+    { name = "agentbuildkit" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "agentbuildkit", editable = "." }]
 
 [[package]]
 name = "aiohappyeyeballs"

@@ -1,1 +1,1 @@
-"""Local installation of the example teams."""
+"""Checkout wrapper for the installed office package."""

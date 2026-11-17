@@ -16,21 +16,34 @@ from agentbuildkit.observability import AuditLog
 from agentbuildkit.revisions import MemoryRevisionStore, RevisionService, SqliteRevisionStore
 from agentbuildkit.teams import TeamBundle, TeamRegistry
 from agentbuildkit.workflows import WorkflowStateStore, memory_workflow_store, sqlite_workflow_store
-from customer_service.connections import (
+from agentbuildkit_templates.customer_service.connections import (
     ConnectionStore,
     MemoryConnectionStore,
     SqliteConnectionStore,
 )
-from customer_service.dashboard import DashboardService
-from customer_service.evaluation import LOCAL_MOCK_TOKEN
-from customer_service.recovery import ActionRecovery, MemoryActionRecovery, SqliteActionRecovery
-from customer_service.sheets import SheetDesk
-from customer_service.team import ORGANISATION_SCOPE, Organisation, build_team, customer_team_bundle
-from office.reporting import ReportingDashboard
-from office.templates import credential_ready, installed_templates
-from operations_reporting.sheets import JobWindow
-from operations_reporting.team import TEAM_ID, ReportingTeam, reporting_bundle
-from operations_reporting.team import build_team as build_reporting_team
+from agentbuildkit_templates.customer_service.dashboard import DashboardService
+from agentbuildkit_templates.customer_service.evaluation import LOCAL_MOCK_TOKEN
+from agentbuildkit_templates.customer_service.recovery import (
+    ActionRecovery,
+    MemoryActionRecovery,
+    SqliteActionRecovery,
+)
+from agentbuildkit_templates.customer_service.sheets import SheetDesk
+from agentbuildkit_templates.customer_service.team import (
+    ORGANISATION_SCOPE,
+    Organisation,
+    build_team,
+    customer_team_bundle,
+)
+from agentbuildkit_templates.office.reporting import ReportingDashboard
+from agentbuildkit_templates.office.templates import credential_ready, installed_templates
+from agentbuildkit_templates.operations_reporting.sheets import JobWindow
+from agentbuildkit_templates.operations_reporting.team import (
+    TEAM_ID,
+    ReportingTeam,
+    reporting_bundle,
+)
+from agentbuildkit_templates.operations_reporting.team import build_team as build_reporting_team
 
 ClientMap = Mapping[str, SupportsChatGetResponse]
 ClientFactory = Callable[[], ClientMap]

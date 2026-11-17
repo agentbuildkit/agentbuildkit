@@ -15,21 +15,25 @@ from agentbuildkit.revisions import Revision, RevisionError, RevisionService
 from agentbuildkit.state.models import RegistryRejected, require_argument_hash
 from agentbuildkit.teams import TeamBundle
 from agentbuildkit.workflows import WorkflowStateStore
-from customer_service.dashboard_model import build_runs, merge_audit
-from customer_service.dashboard_view import (
+from agentbuildkit_templates.customer_service.dashboard_model import build_runs, merge_audit
+from agentbuildkit_templates.customer_service.dashboard_view import (
     AgentInfo,
     AssignmentInfo,
     ConnectionInfo,
     Snapshot,
     render_page,
 )
-from customer_service.draft_pages import maybe_revision_page
-from customer_service.models import FinalOutcome
-from customer_service.recovery import ActionRecovery, MemoryActionRecovery
-from operations_reporting.jobs import parse_as_of
-from operations_reporting.service import handle_report
-from operations_reporting.sheets import ANALYST, JobWindow
-from operations_reporting.team import REPORTING_DIAGRAM, ReportingTeam, reporting_bundle
+from agentbuildkit_templates.customer_service.draft_pages import maybe_revision_page
+from agentbuildkit_templates.customer_service.models import FinalOutcome
+from agentbuildkit_templates.customer_service.recovery import ActionRecovery, MemoryActionRecovery
+from agentbuildkit_templates.operations_reporting.jobs import parse_as_of
+from agentbuildkit_templates.operations_reporting.service import handle_report
+from agentbuildkit_templates.operations_reporting.sheets import ANALYST, JobWindow
+from agentbuildkit_templates.operations_reporting.team import (
+    REPORTING_DIAGRAM,
+    ReportingTeam,
+    reporting_bundle,
+)
 
 Evaluate = Callable[[], Coroutine[Any, Any, EvaluationReport]]
 TeamFactory = Callable[[TeamBundle], ReportingTeam]
@@ -103,7 +107,9 @@ class ReportingDashboard:
 
     async def run_evaluation(self) -> EvaluationReport:
         if self._evaluate is None:
-            from operations_reporting.evaluation import run_reporting_evaluation
+            from agentbuildkit_templates.operations_reporting.evaluation import (
+                run_reporting_evaluation,
+            )
 
             self._evaluate = run_reporting_evaluation
         self.report = await self._evaluate()
@@ -248,7 +254,7 @@ class ReportingDashboard:
 
 
 def _request(as_of: str, note: str) -> Any:
-    from operations_reporting.models import JobsRequest
+    from agentbuildkit_templates.operations_reporting.models import JobsRequest
 
     return JobsRequest(as_of=as_of, note=note)
 

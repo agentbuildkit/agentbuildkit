@@ -15,14 +15,21 @@ from agentbuildkit.revisions import (
 )
 from agentbuildkit.revisions.models import Activation
 from agentbuildkit.testing import ScriptedChatClient
-from customer_service.connections import MemoryConnectionStore, StoredConnection
-from customer_service.evaluation import scripted_clients
-from customer_service.sheets import SheetDesk
-from office.installation import build_installation
-from office.templates import credential_ready, installed_evaluators, installed_templates
-from operations_reporting.sheets import JobWindow
-from operations_reporting.team import TEAM_ID
-from operations_reporting.team import build_team as build_reporting_team
+from agentbuildkit_templates.customer_service.connections import (
+    MemoryConnectionStore,
+    StoredConnection,
+)
+from agentbuildkit_templates.customer_service.evaluation import scripted_clients
+from agentbuildkit_templates.customer_service.sheets import SheetDesk
+from agentbuildkit_templates.office.installation import build_installation
+from agentbuildkit_templates.office.templates import (
+    credential_ready,
+    installed_evaluators,
+    installed_templates,
+)
+from agentbuildkit_templates.operations_reporting.sheets import JobWindow
+from agentbuildkit_templates.operations_reporting.team import TEAM_ID
+from agentbuildkit_templates.operations_reporting.team import build_team as build_reporting_team
 
 _CUSTOMER = "customer-service"
 

@@ -8,10 +8,16 @@ from agent_framework import FunctionTool
 
 from agentbuildkit.guardrails import ToolEffect, prepare_tool
 from agentbuildkit.integrations.composio import ComposioGateway
-from customer_service.connections import ConnectionStore
-from customer_service.sheets import SheetDesk
-from operations_reporting.jobs import FIXTURE, classify, format_jobs, jobs_from_sheet, parse_as_of
-from operations_reporting.team import TEAM_ID
+from agentbuildkit_templates.customer_service.connections import ConnectionStore
+from agentbuildkit_templates.customer_service.sheets import SheetDesk
+from agentbuildkit_templates.operations_reporting.jobs import (
+    FIXTURE,
+    classify,
+    format_jobs,
+    jobs_from_sheet,
+    parse_as_of,
+)
+from agentbuildkit_templates.operations_reporting.team import TEAM_ID
 
 ANALYST = "analyst"
 READ_JOBS = "read_jobs"

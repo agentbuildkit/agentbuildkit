@@ -111,9 +111,9 @@ This release includes the Python package `agentbuildkit`, the `agentkit` command
 
 Skills and persistent agent memory are not in this release. The harness loads declarative team bundles. One local dashboard installs Customer Service and Operations Reporting, and Create team can add another inactive instance of either template. Each instance keeps its own runs, approvals, audit, revisions, and spreadsheet window. A new instance cannot run until its draft is validated, evaluated offline, and activated. Set `APP_STATE_DIRECTORY` to keep instances and drafts in `revisions.sqlite`. When that name is in `.env`, it overrides the shell. Use `--state-directory` to choose a different directory for one process. The scripted check does not measure a live model or account readiness. Google Sheets stays optional, and the key stays on the server.
 
-`examples/customer_service` is a separate example with fixture data. It is not the offline demo and it is not part of the installed package.
+`examples/agentbuildkit_templates/customer_service` is a separate example with fixture data. It is not the offline demo. It is packaged as `agentbuildkit-templates`, not copied into the harness. See [Install](docs/install.md).
 
-A repository checkout can serve those drafts over local stdio MCP. The command is `agentkit mcp serve --state-directory /absolute/path`, with `src` and `examples` on `PYTHONPATH`. It requires this checkout and POSIX file locking. It is not in the published 0.1.0 package or `npx agentbuildkit`. The server does not read `APP_STATE_DIRECTORY` and does not activate a team. See [docs/mcp.md](docs/mcp.md).
+A local install of that templates package serves drafts over stdio MCP and starts the dashboard. `agentkit mcp serve` requires an absolute `--state-directory` and does not read `APP_STATE_DIRECTORY`. `agentkit dashboard --state-directory` selects one process directory and overrides `.env`. Without that flag, a `.env` file in the current directory wins over the shell. The startup lock is POSIX `flock`. The published `agentbuildkit` 0.1.0 package and the published `npx agentbuildkit` package do not include the templates. See [MCP](docs/mcp.md).
 
 Further detail is in [docs/architecture.md](docs/architecture.md).
 

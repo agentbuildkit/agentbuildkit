@@ -5,7 +5,6 @@ Opening a file with an unknown schema copies a backup and leaves that file
 unchanged. It does not delete or rebuild an existing database.
 """
 
-import fcntl
 import json
 import shutil
 import sqlite3
@@ -30,6 +29,10 @@ from agentbuildkit.revisions.validate import content_hash
 _SCHEMA = "2"
 _SUPPORTED = frozenset({"1", "2"})
 _CONNECT_TIMEOUT_SECONDS = 10.0
+
+
+class StartupLockError(RuntimeError):
+    """The revision database cannot take its startup lock on this platform."""
 
 
 class RevisionStore(Protocol):
@@ -234,6 +237,13 @@ class SqliteRevisionStore:
     @contextmanager
     def exclusive(self) -> Generator[None]:
         """Serialize migration and shipped-team registration across processes."""
+        try:
+            import fcntl
+        except ImportError as exc:
+            raise StartupLockError(
+                "The revision database startup lock requires POSIX flock. "
+                "This platform is not supported."
+            ) from exc
         lock_path = self._path.with_name(f"{self._path.name}.init.lock")
         with lock_path.open("a") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)

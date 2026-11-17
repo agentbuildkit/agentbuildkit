@@ -10,7 +10,7 @@ asks the provider registry for one client per role.
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from pathlib import Path
+from importlib.resources import files
 from typing import cast
 
 from agent_framework import FunctionTool, SecretString, SupportsChatGetResponse
@@ -20,10 +20,10 @@ from agentbuildkit.agents import AgentDefinition, PlatformAgent, create_agent
 from agentbuildkit.config import AppSettings
 from agentbuildkit.observability import AuditLog, configure_observability
 from agentbuildkit.providers import ProviderConfiguration, ProviderRegistry, builtin_registry
-from agentbuildkit.teams import TeamBundle, load_bundle
+from agentbuildkit.teams import TeamBundle, load_bundle_json
 from agentbuildkit.workflows.diagram import DiagramChoice, DiagramStep, WorkflowDiagram
-from customer_service.business import BusinessSystem
-from customer_service.models import (
+from agentbuildkit_templates.customer_service.business import BusinessSystem
+from agentbuildkit_templates.customer_service.models import (
     CustomerRequest,
     ProposedResponse,
     QualityDecision,
@@ -62,7 +62,7 @@ CUSTOMER_DIAGRAM = WorkflowDiagram(
     ),
 )
 ORGANISATION_SCOPE = "customer-service"
-BUNDLE_PATH = Path(__file__).with_name("team.json")
+BUNDLE_PATH = files("agentbuildkit_templates.customer_service").joinpath("team.json")
 _SCHEMAS: dict[str, type[BaseModel]] = {
     "CustomerRequest": CustomerRequest,
     "RouteDecision": RouteDecision,
@@ -74,7 +74,7 @@ _ROLE_ORDER = (ALEX, SAM, TAYLOR, JORDAN)
 
 def customer_team_bundle() -> TeamBundle:
     """Load the example bundle. Bindings are checked when the team is built."""
-    return load_bundle(BUNDLE_PATH)
+    return load_bundle_json(BUNDLE_PATH.read_bytes())
 
 
 def _bundle_roles() -> dict[str, ProviderConfiguration]:

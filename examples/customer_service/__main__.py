@@ -1,6 +1,6 @@
-"""Run the reference organisation from the command line."""
+"""Run the checkout customer-service command."""
 
-from customer_service.cli import main
+from agentbuildkit_templates.customer_service.cli import main
 
 if __name__ == "__main__":
     main()

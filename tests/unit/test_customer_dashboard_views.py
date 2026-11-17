@@ -16,8 +16,12 @@ from agentbuildkit.workflows import (
     memory_workflow_store,
     sqlite_workflow_store,
 )
-from customer_service.dashboard import DashboardBinding, DashboardService, serve
-from customer_service.dashboard_model import (
+from agentbuildkit_templates.customer_service.dashboard import (
+    DashboardBinding,
+    DashboardService,
+    serve,
+)
+from agentbuildkit_templates.customer_service.dashboard_model import (
     ALREADY_HANDLED,
     MISSING_ARGUMENTS,
     UNRESOLVED_RESPONSE,
@@ -27,10 +31,10 @@ from customer_service.dashboard_model import (
     outcome_state,
     pause_state,
 )
-from customer_service.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
-from customer_service.models import FinalOutcome, OutcomeStatus
-from customer_service.recovery import SqliteActionRecovery
-from customer_service.team import ORGANISATION_SCOPE, build_team
+from agentbuildkit_templates.customer_service.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
+from agentbuildkit_templates.customer_service.models import FinalOutcome, OutcomeStatus
+from agentbuildkit_templates.customer_service.recovery import SqliteActionRecovery
+from agentbuildkit_templates.customer_service.team import ORGANISATION_SCOPE, build_team
 
 
 def _flat(text: str) -> str:
@@ -297,7 +301,10 @@ async def test_failed_action_is_not_shown_as_unresolved_or_pending(
         del system, request
         raise RuntimeError("private failure detail")
 
-    monkeypatch.setattr("customer_service.business._schedule", fail)
+    monkeypatch.setattr(
+        "agentbuildkit_templates.customer_service.business._schedule",
+        fail,
+    )
     second = _durable("approved-service-action-executes-once", actions, tmp_path)
     try:
         with pytest.raises(WorkflowRunError):

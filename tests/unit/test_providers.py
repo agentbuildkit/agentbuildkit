@@ -27,9 +27,13 @@ from agentbuildkit.providers import (
 )
 from agentbuildkit.testing import ScriptedChatClient
 from agentbuildkit.workflows import memory_workflow_store
-from customer_service import ORGANISATION_SCOPE, CustomerRequest, handle_request
-from customer_service.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
-from customer_service.team import (
+from agentbuildkit_templates.customer_service import (
+    ORGANISATION_SCOPE,
+    CustomerRequest,
+    handle_request,
+)
+from agentbuildkit_templates.customer_service.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
+from agentbuildkit_templates.customer_service.team import (
     ALEX,
     JORDAN,
     SAM,

@@ -7,11 +7,11 @@ from agentbuildkit.workflows import (
     run_workflow,
     sequential_workflow,
 )
-from customer_service.models import FinalOutcome
-from operations_reporting.jobs import mentioned_job_ids
-from operations_reporting.models import JobsRequest, ReviewedReport
-from operations_reporting.sheets import JobWindow
-from operations_reporting.team import WORKFLOW_NAME, ReportingTeam
+from agentbuildkit_templates.customer_service.models import FinalOutcome
+from agentbuildkit_templates.operations_reporting.jobs import mentioned_job_ids
+from agentbuildkit_templates.operations_reporting.models import JobsRequest, ReviewedReport
+from agentbuildkit_templates.operations_reporting.sheets import JobWindow
+from agentbuildkit_templates.operations_reporting.team import WORKFLOW_NAME, ReportingTeam
 
 CONNECTED_FAILURE = "The connected spreadsheet could not be read. Demo jobs were not used."
 _UNSUPPORTED = "Not supported by the supplied records."

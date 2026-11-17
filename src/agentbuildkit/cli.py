@@ -1,11 +1,13 @@
 """AgentBuildKit command line.
 
-``demo``, ``doctor``, ``version``, ``team``, and ``mcp`` are the current commands.
-Add later commands as new subparsers without changing the ones that already exist.
+``demo``, ``doctor``, ``version``, ``team``, ``dashboard``, and ``mcp`` are the
+current commands. Add later commands as new subparsers without changing the
+ones that already exist.
 """
 
 import argparse
 import asyncio
+import importlib
 import os
 import sqlite3
 import sys
@@ -14,6 +16,9 @@ from collections.abc import Callable, Sequence
 
 import agentbuildkit
 from agentbuildkit.demo import DemoError, run_demo
+from agentbuildkit.drafting import require_state_directory
+from agentbuildkit.hosting import flock_available, templates_available, templates_missing_message
+from agentbuildkit.revisions.store import StartupLockError
 from agentbuildkit.teams import load_bundle
 
 _OPENAI_KEY = "OPENAI_API_KEY"
@@ -50,6 +55,8 @@ def run(argv: Sequence[str]) -> int:
         return 0
     if command == "demo":
         return _demo(approve=args.approve, reject=args.reject, verbose=args.verbose)
+    if command == "dashboard":
+        return _dashboard(args.state_directory, args.host, args.port)
     if command == "mcp":
         return _mcp_serve(args.state_directory)
     print("Unknown command.", file=sys.stderr)
@@ -66,6 +73,19 @@ def doctor(*, writer: Callable[[str], None] = print) -> int:
     writer(_status("Python", python, python != ""))
     writer(_status("AgentBuildKit", package, package != ""))
     writer(_status("SQLite", sqlite_version, sqlite_ok))
+    templates = templates_available()
+    writer(
+        _status(
+            "Templates",
+            "installed" if templates else "not installed",
+            True,
+        )
+    )
+    writer(_status("Startup lock", "POSIX flock" if flock_available() else "unavailable", True))
+    if not templates:
+        writer("Dashboard and drafting need the agentbuildkit-templates package.")
+    if not flock_available():
+        writer("The revision database startup lock requires POSIX flock.")
     writer("")
     writer("Providers")
     writer(f"{'OpenAI':<18} {_credential(_OPENAI_KEY)}")
@@ -104,6 +124,21 @@ def _parser() -> argparse.ArgumentParser:
         help="Reject the side effect without prompting.",
     )
     demo.add_argument("--verbose", action="store_true", help="Show an error traceback.")
+    dashboard = commands.add_parser(
+        "dashboard",
+        help="Start the local dashboard for the installed templates.",
+    )
+    dashboard.add_argument(
+        "--state-directory",
+        default=None,
+        help=(
+            "Directory for this process. When set, it overrides APP_STATE_DIRECTORY "
+            "from .env and the shell. When omitted and ./.env exists, the value in "
+            "that file wins over the shell."
+        ),
+    )
+    dashboard.add_argument("--host", default="127.0.0.1")
+    dashboard.add_argument("--port", type=int, default=0)
     mcp = commands.add_parser("mcp", help="Serve local team drafting over stdio.")
     mcp_commands = mcp.add_subparsers(dest="mcp_command", required=True)
     serve = mcp_commands.add_parser(
@@ -118,22 +153,77 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _templates_callable(module_name: str, attribute: str) -> Callable[..., object] | None:
+    """Import one templates entry. An incompatible harness is a message, not a traceback."""
+    try:
+        module = importlib.import_module(module_name)
+    except Exception as exc:
+        if exc.__class__.__name__ != "HarnessIncompatible":
+            raise
+        print(str(exc), file=sys.stderr)
+        return None
+    value = getattr(module, attribute)
+    if not callable(value):
+        print(f"The templates package has no {attribute} entry.", file=sys.stderr)
+        return None
+    return value
+
+
+def _dashboard(state_directory: object, host: object, port: object) -> int:
+    """Start the office dashboard. A missing templates package is an error, not a traceback."""
+    if not isinstance(host, str) or not isinstance(port, int):
+        print("The dashboard address is not valid.", file=sys.stderr)
+        return 2
+    if state_directory is not None and not isinstance(state_directory, str):
+        print("The state directory is not valid.", file=sys.stderr)
+        return 2
+    if not templates_available():
+        print(templates_missing_message(), file=sys.stderr)
+        return 1
+    dashboard_main = _templates_callable("agentbuildkit_templates.office.server", "main")
+    if dashboard_main is None:
+        return 1
+
+    argv = ["--host", host, "--port", str(port)]
+    if isinstance(state_directory, str):
+        argv.extend(["--state-directory", state_directory])
+    try:
+        dashboard_main(argv)
+    except StartupLockError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except SystemExit as exc:
+        if exc.code in (0, None):
+            return 0
+        if isinstance(exc.code, int):
+            return exc.code
+        print(str(exc.code), file=sys.stderr)
+        return 2
+    return 0
+
+
 def _mcp_serve(state_directory: object) -> int:
-    """Start the repository drafting server. The published package has no templates."""
+    """Start local drafting. The state directory must be absolute."""
     if not isinstance(state_directory, str):
         print("The state directory is not valid.", file=sys.stderr)
         return 2
     try:
-        from office.mcp import serve
-    except ImportError:
-        print(
-            "Team drafting is available from a repository checkout with src and "
-            "examples on PYTHONPATH. It is not part of the published package.",
-            file=sys.stderr,
-        )
+        chosen = require_state_directory(state_directory)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if not templates_available():
+        print(templates_missing_message(), file=sys.stderr)
         return 1
+    serve = _templates_callable("agentbuildkit_templates.office.mcp", "serve")
+    if serve is None:
+        return 1
+
     try:
-        serve(state_directory)
+        serve(str(chosen))
+    except StartupLockError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

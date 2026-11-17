@@ -22,13 +22,13 @@ from agentbuildkit.integrations.composio import (
 from agentbuildkit.observability import AuditLog
 from agentbuildkit.testing import ScriptedChatClient
 from agentbuildkit.workflows import memory_workflow_store
-from customer_service.business import BusinessSystem
-from customer_service.connections import SqliteConnectionStore
-from customer_service.dashboard import DashboardService, serve
-from customer_service.models import CustomerRequest
-from customer_service.service import handle_request
-from customer_service.sheets import CATALOG, READ_SPEC, SheetDesk
-from customer_service.team import ORGANISATION_SCOPE, build_team
+from agentbuildkit_templates.customer_service.business import BusinessSystem
+from agentbuildkit_templates.customer_service.connections import SqliteConnectionStore
+from agentbuildkit_templates.customer_service.dashboard import DashboardService, serve
+from agentbuildkit_templates.customer_service.models import CustomerRequest
+from agentbuildkit_templates.customer_service.service import handle_request
+from agentbuildkit_templates.customer_service.sheets import CATALOG, READ_SPEC, SheetDesk
+from agentbuildkit_templates.customer_service.team import ORGANISATION_SCOPE, build_team
 
 _SHEET = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
 _OTHER_SHEET = "1ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
@@ -153,7 +153,7 @@ def _call(name: str, arguments: dict[str, object]) -> ChatResponse:
 
 def _desk(path: Path | None = None) -> tuple[SheetDesk, FakeGateway]:
     if path is None:
-        from customer_service.connections import MemoryConnectionStore
+        from agentbuildkit_templates.customer_service.connections import MemoryConnectionStore
 
         store: MemoryConnectionStore | SqliteConnectionStore = MemoryConnectionStore()
     else:
@@ -473,7 +473,7 @@ async def test_oversized_sheet_result_is_rejected_without_a_partial_answer() -> 
 
 
 def test_quoted_acceptance_range_fits_the_window() -> None:
-    from customer_service.sheets import parse_window
+    from agentbuildkit_templates.customer_service.sheets import parse_window
 
     window = parse_window("'Accounts'!A1:C2")
     assert window.rows == 2
@@ -643,11 +643,11 @@ def test_missing_auth_config_disables_connect_and_does_not_link() -> None:
 
 
 def test_missing_composio_package_is_not_described_as_a_missing_key() -> None:
-    from customer_service.connections import MemoryConnectionStore
+    from agentbuildkit_templates.customer_service.connections import MemoryConnectionStore
 
     desk = SheetDesk(MemoryConnectionStore(), None, package_missing=True)
     page = _dashboard(desk).render("/connections")
-    assert "uv sync --extra composio" in page
+    assert "agentbuildkit[composio]" in page
     assert "Connect Google Sheets</button>" not in page
     assert "until the server has a Composio API key" not in page
 

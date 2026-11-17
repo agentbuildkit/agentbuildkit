@@ -20,19 +20,19 @@ from urllib.parse import parse_qs, urlsplit
 from agentbuildkit.applications import RenderedPage
 from agentbuildkit.evaluation import EvaluationReport
 from agentbuildkit.revisions import PreparedEvaluation, RevisionError
-from customer_service.dashboard import (
-    STATIC_DIRECTORY,
+from agentbuildkit_templates.customer_service.dashboard import (
     STATIC_TYPES,
     describe_error,
     form_field,
+    read_static,
     security_headers,
 )
-from customer_service.draft_pages import create_team_page
-from customer_service.models import FinalOutcome
-from office.installation import Installation, build_installation
-from office.reporting import ReportingDashboard
-from office.templates import installed_evaluators
-from operations_reporting.jobs import parse_as_of
+from agentbuildkit_templates.customer_service.draft_pages import create_team_page
+from agentbuildkit_templates.customer_service.models import FinalOutcome
+from agentbuildkit_templates.office.installation import Installation, build_installation
+from agentbuildkit_templates.office.reporting import ReportingDashboard
+from agentbuildkit_templates.office.templates import installed_evaluators
+from agentbuildkit_templates.operations_reporting.jobs import parse_as_of
 
 _TEAM_PATH = re.compile(r"^/teams/(?P<team>[a-z0-9]+(?:-[a-z0-9]+)*)(?P<rest>/.*)?$")
 _RUN_PATH = re.compile(r"^/runs/(?P<correlation>[A-Za-z0-9]+)$")
@@ -133,10 +133,11 @@ def serve_installation(
             if parts.path.startswith("/static/"):
                 name = parts.path.removeprefix("/static/")
                 content_type = STATIC_TYPES.get(name)
-                if content_type is None:
+                body = None if content_type is None else read_static(name)
+                if content_type is None or body is None:
                     self._send(404, b"Not found", "text/plain; charset=utf-8")
                     return
-                self._send(200, (STATIC_DIRECTORY / name).read_bytes(), content_type)
+                self._send(200, body, content_type)
                 return
             query = {key: values[0] for key, values in parse_qs(parts.query).items() if values}
             path_only = parts.path
@@ -648,7 +649,7 @@ def dashboard_state_directory(argv: list[str] | None = None) -> str | None:
 
 
 def _state_from_options(options: DashboardOptions) -> str | None:
-    from customer_service.cli import selected_state_directory
+    from agentbuildkit_templates.customer_service.cli import selected_state_directory
 
     env_file = Path.cwd() / ".env"
     try:
@@ -666,37 +667,22 @@ def main(argv: list[str] | None = None) -> None:
 
     def open_installation() -> Installation:
         from agentbuildkit.config import load_composio_settings
-        from agentbuildkit.integrations.composio import ComposioUnavailable, LiveComposioGateway
-        from agentbuildkit.providers import ProviderConfiguration, builtin_registry
-        from customer_service.team import production_clients
-        from operations_reporting.team import reporting_bundle
+        from agentbuildkit_templates.customer_service.team import customer_team_bundle
+        from agentbuildkit_templates.office.clients import dashboard_clients, optional_gateway
+        from agentbuildkit_templates.operations_reporting.team import reporting_bundle
 
         env_file = Path.cwd() / ".env"
         env_path = str(env_file) if env_file.is_file() else None
         directory = _state_from_options(options)
         composio = load_composio_settings(env_file_path=env_path)
-        gateway = None
-        package_missing = False
-        key = composio.get("api_key")
-        if key is not None:
-            try:
-                gateway = LiveComposioGateway(
-                    key,
-                    auth_config_id=composio.get("googlesheets_auth_config_id") or "",
-                )
-            except ComposioUnavailable:
-                package_missing = True
-        bundle = reporting_bundle()
-        providers = builtin_registry(env_file_path=env_path)
-        reporting_clients = {
-            agent.name: providers.create_client(
-                ProviderConfiguration(provider=agent.provider, model=agent.model)
-            )
-            for agent in bundle.agents
-        }
+        gateway, package_missing = optional_gateway(
+            composio.get("api_key"),
+            composio.get("googlesheets_auth_config_id") or "",
+        )
+        reporting = reporting_bundle()
         return build_installation(
-            customer_clients=production_clients(env_file_path=env_path),
-            reporting_clients=reporting_clients,
+            customer_clients=dashboard_clients(customer_team_bundle(), env_file_path=env_path),
+            reporting_clients=dashboard_clients(reporting, env_file_path=env_path),
             directory=Path(directory) if directory is not None else None,
             gateway=gateway,
             package_missing=package_missing,
