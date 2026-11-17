@@ -70,7 +70,9 @@ async def run_bundle_evaluation(bundle: TeamBundle) -> EvaluationReport:
 
 async def _execute(case: EvaluationCase) -> CaseObservation:
     log = AuditLog()
-    window = JobWindow(MemoryConnectionStore(), None)
+    bundle = _REVISION_BUNDLE.get()
+    scope = TEAM_ID if bundle is None else bundle.team_id
+    window = JobWindow(MemoryConnectionStore(), None, team_id=scope)
     invented = case.name == "invented-job-is-not-supported"
     summary = "J-100 and J-999 are overdue." if invented else "J-100 is overdue."
     team = build_team(
@@ -113,7 +115,7 @@ async def _execute(case: EvaluationCase) -> CaseObservation:
             team,
             JobsRequest(as_of=_AS_OF),
             correlation_id=case.correlation_id,
-            store=memory_workflow_store(TEAM_ID, log),
+            store=memory_workflow_store(scope, log),
             window=window,
         )
     finally:

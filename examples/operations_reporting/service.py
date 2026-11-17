@@ -11,7 +11,7 @@ from customer_service.models import FinalOutcome
 from operations_reporting.jobs import mentioned_job_ids
 from operations_reporting.models import JobsRequest, ReviewedReport
 from operations_reporting.sheets import JobWindow
-from operations_reporting.team import TEAM_ID, WORKFLOW_NAME, ReportingTeam
+from operations_reporting.team import WORKFLOW_NAME, ReportingTeam
 
 CONNECTED_FAILURE = "The connected spreadsheet could not be read. Demo jobs were not used."
 _UNSUPPORTED = "Not supported by the supplied records."
@@ -27,7 +27,7 @@ async def handle_report(
     window: JobWindow,
 ) -> FinalOutcome:
     """Summarise overdue jobs and keep the result only when the records support it."""
-    if store.scope != TEAM_ID:
+    if store.scope != window.desk.team_id:
         raise RuntimeError("The report store does not match the team.")
     workflow = sequential_workflow(
         (team.analyst, team.reviewer),

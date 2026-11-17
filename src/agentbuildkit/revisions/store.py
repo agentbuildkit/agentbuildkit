@@ -22,10 +22,12 @@ from agentbuildkit.revisions.models import (
     Revision,
     RunPin,
     TeamConfig,
+    TeamInstance,
 )
 from agentbuildkit.revisions.validate import content_hash
 
-_SCHEMA = "1"
+_SCHEMA = "2"
+_SUPPORTED = frozenset({"1", "2"})
 
 
 class RevisionStore(Protocol):
@@ -69,6 +71,14 @@ class RevisionStore(Protocol):
 
     def pin_for_correlation(self, team_id: str, correlation_id: str) -> RunPin | None: ...
 
+    def instances(self) -> tuple[TeamInstance, ...]: ...
+
+    def instance(self, team_id: str) -> TeamInstance | None: ...
+
+    def instance_for_key(self, key: str) -> TeamInstance | None: ...
+
+    def add_instance(self, item: TeamInstance) -> None: ...
+
 
 class MemoryRevisionStore:
     """Process-local revisions for tests and a dashboard without a state directory."""
@@ -80,6 +90,7 @@ class MemoryRevisionStore:
         self._readiness: dict[str, Readiness] = {}
         self._activations: list[Activation] = []
         self._pins: list[RunPin] = []
+        self._instances: dict[str, TeamInstance] = {}
 
     @contextmanager
     def transaction(self) -> Generator[None]:
@@ -91,6 +102,7 @@ class MemoryRevisionStore:
             dict(self._readiness),
             list(self._activations),
             list(self._pins),
+            dict(self._instances),
         )
         try:
             yield
@@ -102,6 +114,7 @@ class MemoryRevisionStore:
                 self._readiness,
                 self._activations,
                 self._pins,
+                self._instances,
             ) = snapshot
             raise
 
@@ -176,6 +189,25 @@ class MemoryRevisionStore:
             if item.team_id == team_id and item.correlation_id == correlation_id:
                 return item
         return None
+
+    def instances(self) -> tuple[TeamInstance, ...]:
+        rows = sorted(self._instances.values(), key=lambda item: (item.created_at, item.team_id))
+        return tuple(rows)
+
+    def instance(self, team_id: str) -> TeamInstance | None:
+        return self._instances.get(team_id)
+
+    def instance_for_key(self, key: str) -> TeamInstance | None:
+        for item in self._instances.values():
+            if item.idempotency_key == key:
+                return item
+        return None
+
+    def add_instance(self, item: TeamInstance) -> None:
+        duplicate = item.team_id in self._instances
+        if duplicate or self.instance_for_key(item.idempotency_key) is not None:
+            raise ValueError("instance exists")
+        self._instances[item.team_id] = item
 
 
 class SqliteRevisionStore:
@@ -429,6 +461,48 @@ class SqliteRevisionStore:
             return None
         return _pin(row)
 
+    def instances(self) -> tuple[TeamInstance, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM instances ORDER BY created_at, team_id"
+        ).fetchall()
+        return tuple(_instance(row) for row in rows)
+
+    def instance(self, team_id: str) -> TeamInstance | None:
+        row = self._connection.execute(
+            "SELECT * FROM instances WHERE team_id = ?",
+            (team_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return _instance(row)
+
+    def instance_for_key(self, key: str) -> TeamInstance | None:
+        row = self._connection.execute(
+            "SELECT * FROM instances WHERE idempotency_key = ?",
+            (key,),
+        ).fetchone()
+        if row is None:
+            return None
+        return _instance(row)
+
+    def add_instance(self, item: TeamInstance) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO instances (
+                team_id, template_id, title, description, idempotency_key, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item.team_id,
+                item.template_id,
+                item.title,
+                item.description,
+                item.idempotency_key,
+                item.created_at,
+            ),
+        )
+        self._commit()
+
     def _prepare(self) -> None:
         tables = {
             str(row[0])
@@ -443,13 +517,18 @@ class SqliteRevisionStore:
             ).fetchone()
             version = "" if row is None else str(row["value"])
         user_tables = tables - {"meta"}
-        if user_tables and version != _SCHEMA:
+        if user_tables and version not in _SUPPORTED:
             self._connection.close()
             _backup(self._path)
             raise RuntimeError(
-                "The revision database is not version 1. "
+                "The revision database is not a supported version. "
                 "A backup was written and the file was not changed."
             )
+        if version == "1":
+            self._connection.close()
+            _backup(self._path)
+            self._connection = sqlite3.connect(self._path)
+            self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.executescript(
             """
@@ -503,6 +582,14 @@ class SqliteRevisionStore:
                 previous_revision_id TEXT NOT NULL,
                 content_hash TEXT NOT NULL,
                 kind TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS instances (
+                team_id TEXT PRIMARY KEY,
+                template_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
                 created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS run_pins (
@@ -592,6 +679,17 @@ def _activation(row: Mapping[str, object]) -> Activation:
         previous_revision_id=str(row["previous_revision_id"]),
         content_hash=str(row["content_hash"]),
         kind=cast(Literal["baseline", "activate", "rollback"], kind),
+        created_at=str(row["created_at"]),
+    )
+
+
+def _instance(row: Mapping[str, object]) -> TeamInstance:
+    return TeamInstance(
+        team_id=str(row["team_id"]),
+        template_id=str(row["template_id"]),
+        title=str(row["title"]),
+        description=str(row["description"]),
+        idempotency_key=str(row["idempotency_key"]),
         created_at=str(row["created_at"]),
     )
 

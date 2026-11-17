@@ -34,13 +34,31 @@ _WORKFLOW_DATABASE = "workflows.sqlite"
 
 
 def state_directory(env_file: Path | None = None) -> str | None:
-    """Return ``APP_STATE_DIRECTORY`` when durable workflow state is configured."""
+    """Return ``APP_STATE_DIRECTORY`` when durable workflow state is configured.
+
+    When an env file is present, its value wins over the process environment.
+    This matches ``load_settings`` and is unchanged by an explicit dashboard path.
+    """
     path = Path.cwd() / ".env" if env_file is None else env_file
     settings = load_app_settings(env_file_path=str(path)) if path.is_file() else load_app_settings()
     directory = settings.get("state_directory")
     if isinstance(directory, str) and directory:
         return directory
     return None
+
+
+def selected_state_directory(explicit: str | None, env_file: Path | None = None) -> str | None:
+    """Return the state directory for this process.
+
+    An explicit path is used as given. It is not taken from the env file or the
+    process environment. Without one, ``state_directory`` applies.
+    """
+    if explicit is not None:
+        chosen = explicit.strip()
+        if not chosen or "\x00" in chosen:
+            raise ValueError("The state directory is not valid.")
+        return chosen
+    return state_directory(env_file)
 
 
 def open_workflow_store(audit_log: AuditLog, directory: str | None) -> WorkflowStateStore:

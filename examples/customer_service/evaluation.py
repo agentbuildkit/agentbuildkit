@@ -30,6 +30,13 @@ LOCAL_MOCK_TOKEN = "local-mock-business-token"
 _REVISION_BUNDLE: ContextVar[TeamBundle | None] = ContextVar(
     "customer_revision_bundle", default=None
 )
+
+
+def _scope() -> str:
+    bundle = _REVISION_BUNDLE.get()
+    return ORGANISATION_SCOPE if bundle is None else bundle.team_id
+
+
 RAW_MODEL_OUTPUT = "RAW-MODEL-OUTPUT-7f3a"
 _REFERENCE = "A-100"
 _BILLING = CustomerRequest(reference=_REFERENCE, message="Please explain the latest invoice.")
@@ -203,7 +210,7 @@ async def _direct(case: EvaluationCase) -> CaseObservation:
             organisation,
             _request(case.name),
             correlation_id=case.correlation_id,
-            store=memory_workflow_store(ORGANISATION_SCOPE, audit_log),
+            store=memory_workflow_store(_scope(), audit_log),
         )
         _require_action_count(actions)
         return _observe(
@@ -224,7 +231,7 @@ async def _approved(case: EvaluationCase, *, duplicate: bool) -> CaseObservation
         path = Path(directory) / "organisation.sqlite"
         organisation = _organisation(scripted_clients(case.name), first_log, actions)
         try:
-            store = sqlite_workflow_store(path, ORGANISATION_SCOPE, first_log)
+            store = sqlite_workflow_store(path, _scope(), first_log)
             result = await handle_request(
                 organisation,
                 _SERVICE,
@@ -241,7 +248,7 @@ async def _approved(case: EvaluationCase, *, duplicate: bool) -> CaseObservation
         second_log = AuditLog()
         resumed = _organisation(_clients(), second_log, actions)
         try:
-            restored = sqlite_workflow_store(path, ORGANISATION_SCOPE, second_log)
+            restored = sqlite_workflow_store(path, _scope(), second_log)
             outcome = await resume_service_action(
                 resumed,
                 restored,
@@ -273,7 +280,7 @@ async def _declined(case: EvaluationCase) -> CaseObservation:
         path = Path(directory) / "organisation.sqlite"
         organisation = _organisation(scripted_clients(case.name), first_log, actions)
         try:
-            store = sqlite_workflow_store(path, ORGANISATION_SCOPE, first_log)
+            store = sqlite_workflow_store(path, _scope(), first_log)
             result = await handle_request(
                 organisation,
                 _SERVICE,
@@ -288,7 +295,7 @@ async def _declined(case: EvaluationCase) -> CaseObservation:
         second_log = AuditLog()
         resumed = _organisation(_clients(), second_log, actions)
         try:
-            restored = sqlite_workflow_store(path, ORGANISATION_SCOPE, second_log)
+            restored = sqlite_workflow_store(path, _scope(), second_log)
             outcome = await resume_service_action(
                 resumed,
                 restored,

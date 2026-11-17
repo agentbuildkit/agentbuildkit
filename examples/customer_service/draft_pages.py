@@ -1,8 +1,15 @@
 """Team draft pages. The revision service decides what is valid and active."""
 
+import uuid
 from collections.abc import Mapping
 
-from agentbuildkit.revisions import FieldChange, Readiness, RevisionError, RevisionService
+from agentbuildkit.revisions import (
+    FieldChange,
+    Readiness,
+    RevisionError,
+    RevisionService,
+    TeamTemplate,
+)
 from customer_service.dashboard_view import Page, Snapshot, e, layout, loc, not_found, status
 
 _NOTICES = {
@@ -28,6 +35,10 @@ _NOTICES = {
     ),
     "discarded": "The draft was discarded. Published revisions were kept.",
     "failed": "Offline evaluation did not finish. Nothing was activated.",
+    "conflict": (
+        "That creation request conflicts with an existing team. The existing team was not changed."
+    ),
+    "inactive": "This team is not active. Activate a revision before running it.",
 }
 
 
@@ -58,7 +69,8 @@ def maybe_revision_page(
 
 def _drafts(snap: Snapshot, service: RevisionService, query: Mapping[str, str]) -> Page:
     team_id = snap.team_id
-    active = service.active(team_id)
+    runnable = service.runnable(team_id)
+    active = service.active(team_id) if runnable else None
     draft = service.drafts(team_id)
     notice = _notice(query.get("notice", ""))
     preview = _shipped_preview(service, team_id)
@@ -77,31 +89,47 @@ def _drafts(snap: Snapshot, service: RevisionService, query: Mapping[str, str]) 
             "It does not discard published revisions."
         )
     else:
+        label = "Open draft" if active is None else "Edit active version"
         action = (
             f'<form method="post" action="{loc(snap, "/drafts")}">{_team(snap)}'
-            '<button class="btn btn-primary" type="submit">Edit active version</button>'
+            f'<button class="btn btn-primary" type="submit">{label}</button>'
             "</form>"
             f'<form method="post" action="{loc(snap, "/drafts/reset")}">{_team(snap)}'
             '<button class="btn btn-secondary" type="submit">'
             "Reset from shipped template</button></form>"
         )
         reset_note = (
-            "Edit active version copies the revision in use. "
+            "Open draft copies the shipped template."
+            if active is None
+            else "Edit active version copies the revision in use. "
             "Reset copies the shipped template instead."
         )
     current = draft[0].draft_id if draft else ""
     state = "Draft open" if draft else "No open draft"
+    if active is None:
+        active_block = (
+            '<p class="sm"><span class="tag">Not active</span> No revision is active. '
+            "New runs stay off until you activate a draft.</p>"
+        )
+    else:
+        marker = status("completed", "Active")
+        active_block = (
+            f'<p class="sm">{marker} <span class="mono">r{active.number}</span> '
+            f"{e(active.config.title)}</p>"
+            f'<p class="sm muted">{e(active.evaluation_note)}</p>'
+        )
+    intro = (
+        "These pages version this installed team. Editing this team does not create "
+        "another team. Saving, validating, and evaluating do not activate."
+    )
     content = f"""{notice}
 <header class="head"><div class="stack-xs"><h1>Team drafts</h1>
-<p class="muted">These pages version this installed team. They do not install another team.
-Saving, validating, and evaluating do not activate.</p>
+<p class="muted">{intro}</p>
 <p class="sm">{e(reset_note)}</p></div><div class="row-s">{action}</div></header>
 <p class="sm muted">{e(preview)}</p>
 <section class="card card-pad" aria-labelledby="active-revision">
   <h2 id="active-revision">Active revision</h2>
-  <p class="sm">{status("completed", "Active")} <span class="mono">r{active.number}</span>
-  {e(active.config.title)}</p>
-  <p class="sm muted">{e(active.evaluation_note)}</p>
+  {active_block}
   <p class="sm"><a href="{loc(snap, "/revisions")}">Revision history</a></p>
 </section>
 <section class="card card-pad"><h2>Draft</h2>
@@ -122,7 +150,7 @@ def _editor(
     draft = service.draft(team_id, draft_id)
     template = service.template(team_id)
     readiness = service.readiness_for(team_id, draft_id)
-    changes = service.changes(team_id, draft.config)
+    compared, changes = service.comparison(team_id, draft.config)
     notes = service.credential_notes(draft.config)
     notice = _notice(query.get("notice", ""))
     fields: list[str] = []
@@ -166,7 +194,7 @@ def _editor(
 <div class="stack-xs">{tool_block}</div>
 </section>"""
         )
-    diff = _changes(changes)
+    diff = _changes(changes, compared)
     ready = _readiness_block(readiness, notes)
     version = str(draft.version)
     digest = draft.content_hash
@@ -192,10 +220,10 @@ def _editor(
 <a class="crumb" href="{drafts}">Team drafts</a></p>
 <h1>Draft</h1>
 <p class="muted">Version {e(version)}. Hash <span class="mono">{e(digest[:12])}</span>.
-This edits the installed team. It does not install another team.
+This edits the installed team. Editing this team does not create another team.
 This is not the active revision until you activate it.</p></div></header>
 <section class="card card-pad" aria-labelledby="compare-heading">
-<h2 id="compare-heading">Compared with the active revision</h2>
+<h2 id="compare-heading">Compared with the {e(compared)}</h2>
 {diff}</section>
 {ready}
 <form method="post" action="{loc(snap, f"/drafts/{draft.draft_id}")}" class="stack-s">
@@ -227,11 +255,14 @@ This is not the active revision until you activate it.</p></div></header>
 
 def _history(snap: Snapshot, service: RevisionService, query: Mapping[str, str]) -> Page:
     team_id = snap.team_id
-    active = service.active(team_id)
+    active = service.active(team_id) if service.runnable(team_id) else None
     notice = _notice(query.get("notice", ""))
     rows: list[str] = []
-    for revision in reversed(service.revisions(team_id)):
-        if revision.revision_id == active.revision_id:
+    published = service.revisions(team_id)
+    if not published:
+        rows.append('<p class="sm">No revision is active. Activation publishes the first one.</p>')
+    for revision in reversed(published):
+        if active is not None and revision.revision_id == active.revision_id:
             marker = status("completed", "Active")
             action = ""
         else:
@@ -282,6 +313,8 @@ It does not erase history or repeat an action.</p>
 
 
 def _shipped_preview(service: RevisionService, team_id: str) -> str:
+    if not service.runnable(team_id):
+        return "No revision is active yet. The draft is compared with the shipped template."
     changes = service.shipped_changes(team_id)
     if not changes:
         return "The shipped template matches the active revision."
@@ -289,17 +322,18 @@ def _shipped_preview(service: RevisionService, team_id: str) -> str:
     return f"The shipped template differs from the active revision in {labels}."
 
 
-def _changes(changes: tuple[FieldChange, ...]) -> str:
+def _changes(changes: tuple[FieldChange, ...], compared: str = "active revision") -> str:
     if not changes:
-        return '<p class="sm">No differences from the active revision.</p>'
+        return f'<p class="sm">No differences from the {e(compared)}.</p>'
     rows: list[str] = []
+    before_label = "Active" if compared == "active revision" else "Template"
     for change in changes:
         label = change.label
         before = change.before
         after = change.after
         rows.append(
             f"""<div class="stack-xs"><h3>{e(label)}</h3>
-<div class="diff"><div><p class="xs muted">Active</p><p class="sm">{e(before)}</p></div>
+<div class="diff"><div><p class="xs muted">{before_label}</p><p class="sm">{e(before)}</p></div>
 <div><p class="xs muted">Draft</p><p class="sm">{e(after)}</p></div></div></div>"""
         )
     return "".join(rows)
@@ -355,3 +389,44 @@ def _storage(snap: Snapshot) -> str:
     if snap.persistent:
         return "Drafts and revisions are saved in this dashboard's state directory."
     return "This dashboard is memory only. Drafts last until it stops."
+
+
+def create_team_page(
+    snap: Snapshot,
+    templates: tuple[TeamTemplate, ...],
+    query: Mapping[str, str],
+) -> Page:
+    """Choose a supported template and create an inactive team."""
+    key = uuid.uuid4().hex
+    cards: list[str] = []
+    for index, template in enumerate(templates):
+        agents = ", ".join(agent.name for agent in template.agents)
+        required = tuple(tool for agent in template.agents for tool in agent.required_tools)
+        tools = ", ".join(required) or "none"
+        selected = " checked" if index == 0 else ""
+        cards.append(
+            f"""<label class="card card-pad">
+<input type="radio" name="template_id" value="{e(template.template_id)}" required{selected}>
+<span class="strong">{e(template.title)}</span>
+<span class="sm">{e(template.description)}</span>
+<span class="xs muted">Agents: {e(agents)}. Required tools: {e(tools)}.
+Suite {e(template.suite_version)}.</span>
+</label>"""
+        )
+    content = f"""{_notice(query.get("notice", ""))}
+<header class="head"><div class="stack-xs"><h1>Create team</h1>
+<p class="muted">Choose a supported template. The new team starts as an inactive draft.
+It does not copy connection assignments, spreadsheet windows, or another team's data.
+It becomes runnable only after validation, offline evaluation, and activation.</p>
+<p class="sm muted">Offline evaluation uses scripted replies. It does not measure a live model
+or show that a connected account is ready.</p></div></header>
+<form method="post" action="/teams/new" class="stack-s">
+<input type="hidden" name="idempotency_key" value="{e(key)}">
+<div class="stack-s">{"".join(cards)}</div>
+<label for="title">Display name</label>
+<input id="title" name="title" maxlength="80" required>
+<label for="description">Description</label>
+<textarea id="description" name="description"></textarea>
+<button class="btn btn-primary" type="submit">Create inactive draft</button>
+</form>"""
+    return Page(200, layout(snap, title="Create team", current="Drafts", content=content))

@@ -592,7 +592,7 @@ def test_draft_pages_keep_activation_separate() -> None:
         reporting = installation.reporting.render("/drafts")
         assert "Edit active version" in page
         assert "Reset from shipped template" in page
-        assert "do not install another team" in page
+        assert "does not create another team" in page
         assert 'href="/teams/customer-service/drafts"' in page
         assert "Revision history" in page
         assert "Edit active version" in reporting

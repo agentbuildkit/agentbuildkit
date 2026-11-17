@@ -1,5 +1,9 @@
 """Offline tests for the local organisation command."""
 
+import os
+import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -8,6 +12,8 @@ from agent_framework import SecretString
 from agentbuildkit.agents import AgentOutputError
 from agentbuildkit.observability import AuditEvent, AuditLog
 from agentbuildkit.providers import ProviderError
+from agentbuildkit.revisions import RevisionService, SqliteRevisionStore
+from agentbuildkit.testing import ScriptedChatClient
 from agentbuildkit.workflows import memory_workflow_store
 from customer_service.cli import (
     approval_from_text,
@@ -16,6 +22,7 @@ from customer_service.cli import (
     render_failure,
     render_outcome,
     run_session,
+    selected_state_directory,
     state_directory,
 )
 from customer_service.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
@@ -189,6 +196,153 @@ def test_state_directory_reads_the_app_setting(tmp_path: Path) -> None:
     env_file.write_text("APP_STATE_DIRECTORY=/data\n", encoding="utf-8")
 
     assert state_directory(env_file) == "/data"
+
+
+def test_env_file_overrides_the_shell_and_an_explicit_directory_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentinel = tmp_path / "sentinel"
+    shell = tmp_path / "from-shell"
+    chosen = tmp_path / "chosen"
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"APP_STATE_DIRECTORY={sentinel}\n", encoding="utf-8")
+    monkeypatch.setenv("APP_STATE_DIRECTORY", str(shell))
+
+    assert state_directory(env_file) == str(sentinel)
+    assert selected_state_directory(None, env_file) == str(sentinel)
+    assert selected_state_directory(str(chosen), env_file) == str(chosen)
+    monkeypatch.chdir(tmp_path)
+    assert state_directory() == str(sentinel)
+
+
+def test_dashboard_argument_ignores_the_env_file_in_a_fresh_process(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    sentinel = tmp_path / "sentinel"
+    shell = tmp_path / "shell"
+    chosen = tmp_path / "chosen"
+    workspace.mkdir()
+    sentinel.mkdir()
+    shell.mkdir()
+    chosen.mkdir()
+    marker = sentinel / "marker.txt"
+    marker.write_bytes(b"keep")
+    stamp = marker.stat().st_mtime_ns
+    (workspace / ".env").write_text(f"APP_STATE_DIRECTORY={sentinel}\n", encoding="utf-8")
+    root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f"{root / 'src'}:{root / 'examples'}"
+    env["APP_STATE_DIRECTORY"] = str(shell)
+    explicit = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from office.server import dashboard_state_directory\n"
+            "import sys\n"
+            "print(dashboard_state_directory(sys.argv[1:]))",
+            "--state-directory",
+            str(chosen),
+        ],
+        cwd=workspace,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert explicit.returncode == 0
+    assert explicit.stdout.strip() == str(chosen)
+    inherited = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from office.server import dashboard_state_directory\n"
+            "print(dashboard_state_directory([]))",
+        ],
+        cwd=workspace,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert inherited.returncode == 0
+    assert inherited.stdout.strip() == str(sentinel)
+    assert marker.read_bytes() == b"keep"
+    assert marker.stat().st_mtime_ns == stamp
+    assert list(shell.iterdir()) == []
+    assert list(chosen.iterdir()) == []
+    help_text = subprocess.run(
+        [sys.executable, "-m", "customer_service.dashboard", "--help"],
+        cwd=workspace,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert help_text.returncode == 0
+    assert "--state-directory" in help_text.stdout
+
+
+def test_explicit_directory_receives_databases_and_migration_backups(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    sentinel = tmp_path / "sentinel"
+    shell = tmp_path / "shell"
+    chosen = tmp_path / "chosen"
+    for path in (workspace, sentinel, shell, chosen):
+        path.mkdir()
+    marker = sentinel / "marker.txt"
+    marker.write_bytes(b"keep")
+    stamp = marker.stat().st_mtime_ns
+    (workspace / ".env").write_text(f"APP_STATE_DIRECTORY={sentinel}\n", encoding="utf-8")
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv("APP_STATE_DIRECTORY", str(shell))
+    from office.installation import build_installation
+    from office.templates import installed_templates
+
+    database = chosen / "revisions.sqlite"
+    service = RevisionService(
+        SqliteRevisionStore(database),
+        installed_templates(),
+        credentials=lambda _provider: False,
+    )
+    service.seed()
+    service.close()
+    connection = sqlite3.connect(database)
+    connection.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+    connection.commit()
+    connection.close()
+    resolved = selected_state_directory(str(chosen), workspace / ".env")
+    assert resolved == str(chosen)
+    installation = build_installation(
+        customer_clients=scripted_clients("billing-routes-to-sam"),
+        reporting_clients={
+            "analyst": ScriptedChatClient([]),
+            "reviewer": ScriptedChatClient([]),
+        },
+        directory=Path(resolved) if resolved is not None else None,
+    )
+    installation.close()
+    names = {path.name for path in chosen.iterdir()}
+    assert "revisions.sqlite" in names
+    assert "workflows.sqlite" in names
+    assert "connections.sqlite" in names
+    assert "action-recovery.sqlite" in names
+    assert any(name.startswith("revisions.sqlite.bak-") for name in names)
+    assert marker.read_bytes() == b"keep"
+    assert marker.stat().st_mtime_ns == stamp
+    assert list(sentinel.iterdir()) == [marker]
+    assert list(shell.iterdir()) == []
+    stray = [
+        path
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+        and (
+            path.suffix == ".sqlite" or ".bak-" in path.name or path.name.endswith(("-wal", "-shm"))
+        )
+        and chosen not in path.parents
+        and path != chosen
+    ]
+    assert stray == []
 
 
 def test_health_check_imports_without_an_api_key(

@@ -27,7 +27,7 @@ from agentbuildkit.integrations.composio import (
     ComposioRejected,
 )
 from agentbuildkit.observability import AuditEvent
-from agentbuildkit.revisions import Revision, RevisionService
+from agentbuildkit.revisions import Revision, RevisionError, RevisionService
 from agentbuildkit.state.models import RegistryRejected, require_argument_hash
 from agentbuildkit.teams import TeamBundle
 from agentbuildkit.workflows import (
@@ -160,6 +160,11 @@ class DashboardService:
     async def submit(self, reference: str, message: str) -> FinalOutcome:
         """Run one request. A side effect stays pending until a person decides."""
         team_id = self.team_id
+        if self.revisions is not None and not self.revisions.runnable(team_id):
+            raise RevisionError(
+                "inactive",
+                "This team is not active. Activate a revision before running it.",
+            )
         revision = self.revisions.active(team_id) if self.revisions is not None else None
         organisation = self._for_revision(revision)
         correlation_id = uuid.uuid4().hex
@@ -302,7 +307,7 @@ class DashboardService:
 
     def snapshot(self) -> Snapshot:
         """Read the current state for a page. Nothing is changed or run."""
-        bundle, title, installed = self._shown_bundle()
+        bundle, title, installed, runnable = self._shown_bundle()
         agents = tuple(
             AgentInfo(
                 name=agent.name,
@@ -350,6 +355,13 @@ class DashboardService:
             ),
             diagram=CUSTOMER_DIAGRAM,
             actor_label="Specialist",
+            runnable=runnable,
+            activity=tuple(
+                (team_id, "Active" if flag else "Draft")
+                for team_id, _title, flag in (
+                    () if self.revisions is None else self.revisions.roster()
+                )
+            ),
         )
 
     def page(self, path: str = "/", query: Mapping[str, str] | None = None) -> Page:
@@ -371,17 +383,13 @@ class DashboardService:
         self.last_built_instructions = organisation.alex.definition.instructions
         return organisation
 
-    def _shown_bundle(self) -> tuple[TeamBundle, str, tuple[tuple[str, str], ...]]:
+    def _shown_bundle(self) -> tuple[TeamBundle, str, tuple[tuple[str, str], ...], bool]:
         if self.revisions is None:
             bundle = customer_team_bundle()
-            return bundle, bundle.display_name, self.installed
-        revision = self.revisions.active(self.team_id)
-        bundle = self.revisions.bundle_for(revision)
-        installed = tuple(
-            (team_id, self.revisions.active(team_id).config.title)
-            for team_id, _title in self.installed
-        )
-        return bundle, revision.config.title, installed
+            return bundle, bundle.display_name, self.installed, True
+        bundle, title, runnable = self.revisions.presentation(self.team_id)
+        installed = tuple((team_id, label) for team_id, label, _runnable in self.revisions.roster())
+        return bundle, title, installed, runnable
 
     def render(self, path: str = "/", query: Mapping[str, str] | None = None) -> str:
         """Render one page. Secrets are not included."""

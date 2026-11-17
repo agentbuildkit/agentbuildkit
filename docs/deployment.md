@@ -18,10 +18,10 @@ Use this before running AgentBuildKit or the customer-service example. The examp
 
 ## Persistence
 
-- [ ] `APP_STATE_DIRECTORY` is set.
+- [ ] `APP_STATE_DIRECTORY` is set. A value in `.env` overrides the shell. A process that must use another directory passes `--state-directory`. That flag was verified to receive every database and a revision migration backup. A shell assignment alone was not shown to do so when `.env` already sets the variable.
 - [ ] That directory is a mounted volume, and the container filesystem is not the store.
-- [ ] `revisions.sqlite` stays on that volume beside the workflow, recovery, and connection files. Deleting it drops published team revisions. It does not hold credentials or spreadsheet assignments.
-- [ ] An unsupported `revisions.sqlite` is left unchanged after its backup copy is written. Do not replace it with an empty file to force a reset.
+- [ ] `revisions.sqlite` stays on that volume beside the workflow, recovery, and connection files. Deleting it drops installed teams and published revisions. It does not hold credentials or spreadsheet assignments.
+- [ ] Opening a version 1 revision file writes a backup, then adds the installed-team table and marks the file version 2. Existing revisions stay. An unsupported file is left unchanged after its backup copy is written. Do not replace it with an empty file to force a reset.
 - [ ] A restart still lists a pending approval that was paused before the restart, on the revision that run started with.
 - [ ] A second approval of the same request does not repeat the side effect.
 

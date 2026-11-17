@@ -105,6 +105,8 @@ class Snapshot:
     footnote: str = ""
     diagram: WorkflowDiagram = _UNREGISTERED_DIAGRAM
     actor_label: str = "Specialist"
+    runnable: bool = True
+    activity: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -262,12 +264,15 @@ _NAV: tuple[tuple[str, str, str], ...] = (
 
 
 def _switcher(snap: Snapshot) -> str:
-    if len(snap.installed) < 2:
+    if not snap.installed:
         return ""
+    labels = dict(snap.activity)
     links: list[str] = []
     for team_id, title in snap.installed:
         current = ' aria-current="true"' if team_id == snap.team_id else ""
-        links.append(f'<a href="/teams/{e(team_id)}/"{current}>{e(title)}</a>')
+        tag = '<span class="tag">Draft</span>' if labels.get(team_id) == "Draft" else ""
+        links.append(f'<a href="/teams/{e(team_id)}/"{current}>{e(title)}{tag}</a>')
+    links.append('<a href="/teams/new">Create team</a>')
     return f"""<nav class="teams" aria-label="Installed teams">{"".join(links)}
 <p class="xs">One local operator. Each team keeps its own runs, approvals, and spreadsheet
 window.</p></nav>"""
@@ -419,9 +424,15 @@ def _run_for(snap: Snapshot, correlation_id: str) -> Run | None:
 
 def _runs_table(snap: Snapshot, runs: Sequence[Run], *, caption: str) -> str:
     if not runs:
+        if snap.runnable:
+            hint = "Send a request, or start from one of the examples."
+            action = f'<a class="btn btn-secondary" href="{loc(snap, "/?new=1")}">New request</a>'
+        else:
+            hint = "This team is not active. Activate a draft before a request can run."
+            action = f'<a class="btn btn-secondary" href="{loc(snap, "/drafts")}">Edit draft</a>'
         return f"""<div class="empty"><h3>No runs yet</h3>
-<p class="muted sm">Send a request, or start from one of the examples.</p>
-<a class="btn btn-secondary" href="{loc(snap, "/?new=1")}">New request</a></div>"""
+<p class="muted sm">{hint}</p>
+{action}</div>"""
     rows: list[str] = []
     for run in runs:
         changes = len(run.history)
@@ -529,14 +540,31 @@ def _evaluation_note(snap: Snapshot) -> str:
     return "Scripted replies and the labelled demo jobs. Not results from a connected spreadsheet."
 
 
+def _request_action(snap: Snapshot) -> str:
+    if snap.runnable:
+        return (
+            f'<a class="btn btn-primary" href="{loc(snap, "/?new=1")}">'
+            f"{icon('plus')}New request</a>"
+        )
+    return f'<a class="btn btn-primary" href="{loc(snap, "/drafts")}">Edit draft</a>'
+
+
 def overview(snap: Snapshot, query: Mapping[str, str]) -> Page:
-    open_sheet = query.get("new") == "1" or snap.draft is not None
+    open_sheet = snap.runnable and (query.get("new") == "1" or snap.draft is not None)
     banner = "" if snap.draft is not None else error_banner(snap.error)
     title = snap.title or snap.team_name.replace("-", " ").capitalize()
     summary = snap.summary or (
         "Four agents answer customer requests. Changes to the business system wait for "
         "your approval."
     )
+    if snap.runnable:
+        badge = f'<span class="tag">{icon("info", 13)}Demo data</span>'
+    else:
+        badge = '<span class="tag">Not active</span>'
+        summary = (
+            f"{summary} This team is a draft. Validate it, run the offline evaluation, "
+            "and activate it before a request can run."
+        )
     recent = snap.runs[:_RECENT]
     more = (
         f'<a class="sm" href="{loc(snap, "/runs")}">All {len(snap.runs)} runs</a>'
@@ -546,11 +574,10 @@ def overview(snap: Snapshot, query: Mapping[str, str]) -> Page:
     content = f"""{banner}
 <header class="head">
   <div class="stack-xs">
-    <div class="titlerow"><h1>{e(title)}</h1><span class="tag">{icon("info", 13)}Demo
-data</span></div>
+    <div class="titlerow"><h1>{e(title)}</h1>{badge}</div>
     <p class="muted">{e(summary)}</p>
   </div>
-  <a class="btn btn-primary" href="{loc(snap, "/?new=1")}">{icon("plus")}New request</a>
+  {_request_action(snap)}
 </header>
 {_attention(snap)}
 <div class="grid-main">
@@ -677,7 +704,7 @@ def runs_page(snap: Snapshot) -> Page:
     content = f"""{error_banner(snap.error)}
 <header class="head"><div class="stack-xs"><h1>Runs</h1>
 <p class="muted">Every request for this team, newest first.</p></div>
-<a class="btn btn-primary" href="{loc(snap, "/?new=1")}">{icon("plus")}New request</a></header>
+{_request_action(snap)}</header>
 <section class="card">{_runs_table(snap, snap.runs, caption="All runs")}</section>"""
     return Page(200, layout(snap, title="Runs", current="Runs", content=content))
 
@@ -922,6 +949,8 @@ def _callout(snap: Snapshot, run: Run) -> str:
         else "the service action"
     )
     if run.state == "unresolved":
+        follow = "/?new=1" if snap.runnable else "/drafts"
+        follow_label = "New request" if snap.runnable else "Edit draft"
         return f"""<section class="card callout" aria-labelledby="callout-heading">
   <span class="badge badge-unres">{icon("help", 20)}</span>
   <div class="callout-body">
@@ -936,7 +965,7 @@ way.</p>
     <p class="sm muted">It won't be retried automatically: sending again could repeat the change. A
 failed run is different: there the attempt ended with an error.</p>
     <div class="row-s"><a class="btn btn-secondary" href="#audit-heading">See audit events</a><a
-class="btn btn-secondary" href="{loc(snap, "/?new=1")}">{icon("plus")}New request</a></div>
+class="btn btn-secondary" href="{loc(snap, follow)}">{icon("plus")}{follow_label}</a></div>
   </div>
 </section>"""
     if run.state == "failed":

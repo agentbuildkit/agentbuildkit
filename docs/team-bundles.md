@@ -27,12 +27,17 @@ middleware, and provider/model audit metadata. A bundle cannot turn a side effec
 into a read. The application still owns routing, persistence, approval decisions,
 and trace evaluation using the existing harness APIs.
 
-Drafts version the two installed teams, Customer Service and Operations
-Reporting. They do not install another team or another copy of a team. Edit
-active version copies the revision that is active now. Reset from shipped
-template is a separate action. It does not replace an open draft unless that
-action is submitted, and the editor then shows how the template differs from
-the active revision. An open draft is otherwise left as it is.
+Create team installs another instance of Customer Service or Operations
+Reporting. Those are the only templates. Create team does not generate a
+workflow, load uploaded code, or accept any other template. The template id
+stays on the registered workflow. The installed team id is separate, stable,
+and independent of the display name. A new instance starts as an inactive
+draft with no connection assignments and no runnable revision. It can run
+only after validate, the scripted offline evaluation, and an explicit
+activation, in that order. Saving or evaluating does not activate it. The
+first activation publishes revision 1. Later edits copy the active revision.
+Reset from the shipped template stays a separate action. Editing one team
+does not create another team.
 
 A draft edits only the display name, description, purpose, instructions, provider,
 model, and tool selection of a registered template. Role ids, schemas, approval
@@ -46,16 +51,26 @@ The revision is recorded before a run starts, so a pending approval keeps it
 after a restart. Rollback is refused when that revision no longer matches the
 current template, and the active pointer stays where it is.
 
-The scripted suite does not measure a live model and does not prove that
-changed instructions are effective. A missing provider key is reported and is
-not printed. A pattern check can refuse text that looks like a credential and
-does not store that text. It does not prove that other wording contains no
-secret. Spreadsheet assignments are checked again at execution and are not
-restored by rollback. Set `APP_STATE_DIRECTORY` to keep drafts and revisions
-in `revisions.sqlite` beside the other local databases. Without that directory
-they last until the process stops. The revision database is new. An unsupported
-`revisions.sqlite` is copied to a backup and left unchanged. Older workflow,
-recovery, and connection files are not rewritten.
+The scripted suite does not measure a live model, does not prove that changed
+instructions are effective, and does not show that a connected account is ready.
+It uses the candidate instance's configuration and an in-memory connection
+store. A missing provider key is reported and is not printed. A pattern check
+can refuse text that looks like a credential and does not store that text. It
+does not prove that other wording contains no secret. Spreadsheet assignments
+are checked again at execution and are not restored by rollback or copied when
+a team is created. Set `APP_STATE_DIRECTORY` to keep installed teams, drafts,
+and revisions in `revisions.sqlite` beside the other local databases. A value
+in `.env` overrides the same name in the shell. `--state-directory` selects
+the directory for one dashboard process. A check with a fake `.env` pointed
+at a sentinel directory wrote every local database and a revision migration
+backup only in the directory named by the flag. The sentinel was unchanged.
+A shell assignment alone was not shown to select a temporary directory when
+`.env` already sets `APP_STATE_DIRECTORY`. Earlier preview processes started
+that way do not have an established storage location. Without a directory
+they last until the process stops. A version 1 revision file is
+backed up and opened as version 2. The existing revisions stay. An unsupported
+file is copied to a backup and left unchanged. Older workflow, recovery, and
+connection files are not rewritten.
 
 The customer-service example loads `examples/customer_service/team.json` with
 `load_bundle` and resolves it through `definitions`. Typed models and prepared

@@ -28,6 +28,10 @@ class ScriptedChatClient(FunctionInvocationLayer, BaseChatClient[Any]):
         self.requests: list[list[Message]] = []
         self.invocations: list[dict[str, Any]] = []
 
+    def queued_responses(self) -> tuple[ChatResponse, ...]:
+        """Return the unused script, so a test can combine several scenarios."""
+        return tuple(self._responses)
+
     def _inner_get_response(
         self,
         *,
