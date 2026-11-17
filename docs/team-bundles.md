@@ -72,6 +72,14 @@ backed up and opened as version 2. The existing revisions stay. An unsupported
 file is copied to a backup and left unchanged. Older workflow, recovery, and
 connection files are not rewritten.
 
+A local MCP client can do the same preparation over stdio. It lists the two
+templates, creates an inactive instance, edits the open draft with an expected
+version, validates it, and runs the scripted suite. It cannot activate,
+discard, or reset. Start it with an absolute `--state-directory`, then open
+that directory in the dashboard to activate. The command is documented in
+[MCP](mcp.md). It requires this checkout and POSIX file locking. It is not
+part of the published package or `npx agentbuildkit`.
+
 The customer-service example loads `examples/customer_service/team.json` with
 `load_bundle` and resolves it through `definitions`. Typed models and prepared
 tools stay in the application. `build_team` passes those definitions to

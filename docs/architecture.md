@@ -134,6 +134,8 @@ A startup failure, a lost response, a malformed payload, and a duplicate complet
 
 MCP servers come from `McpServerConfig`. The name, transport, command, URL, and credentials are configuration. A model cannot replace them or pass `url`, `command`, `headers`, or `authorization` as tool arguments. Each exposed remote tool has an explicit `ToolEffect`.
 
+The local drafting server is a separate stdio process. It calls `RevisionService` for the registered templates. It does not activate a revision, and draft text it returns is data rather than a change to its own tools. See [MCP](mcp.md).
+
 ## Observability and correlation
 
 `configure_observability` sets OpenTelemetry from `APP_` settings. Console export stays off unless `APP_ENABLE_CONSOLE_EXPORTERS` is true. Sensitive prompt and tool payloads stay off unless a caller sets `enable_sensitive_data=True`.
