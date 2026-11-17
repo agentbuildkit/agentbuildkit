@@ -4,6 +4,9 @@ The dashboard calls this service. A future MCP server can call it too. The
 service does not import example packages, connect accounts, or run tools.
 """
 
+import re
+import sqlite3
+import threading
 import uuid
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -22,6 +25,7 @@ from agentbuildkit.revisions.models import (
     RevisionError,
     RunPin,
     TeamConfig,
+    TeamInstance,
     TeamTemplate,
 )
 from agentbuildkit.revisions.store import RevisionStore
@@ -33,6 +37,9 @@ from agentbuildkit.revisions.validate import (
 )
 from agentbuildkit.teams import TeamBundle
 
+_TEAM_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_KEY = re.compile(r"^[A-Za-z0-9_.:-]{8,80}$")
+_RESERVED = frozenset({"new", "static", "connections", "teams", "drafts", "revisions"})
 _OFFLINE_NOTE = (
     "Scripted offline suite. This does not measure a live model and does not "
     "prove that changed instructions are effective."
@@ -51,37 +58,161 @@ class RevisionService:
         credentials: CredentialProbe | None = None,
     ) -> None:
         self._store = store
-        self._templates = {item.team_id: item for item in templates}
+        self._templates = {item.template_id: item for item in templates}
         self._credentials = credentials if credentials is not None else _unconfigured
+        self._creation = threading.Lock()
 
     def close(self) -> None:
         self._store.close()
 
     def seed(self) -> None:
-        """Publish each shipped template once. Existing revisions are kept."""
-        for template in self._templates.values():
-            if self._store.revisions(template.team_id):
-                continue
-            config = config_from_template(template)
-            revision = self._publish(
-                template,
-                config,
-                suite_version="shipped",
-                evaluation_passed=True,
-                evaluation_note="Shipped template. Not an operator evaluation.",
-                kind="baseline",
-                previous="",
+        """Register each shipped team once. Existing revisions and drafts are kept."""
+        for template in self.templates():
+            self._ensure_shipped(template)
+
+    def _ensure_shipped(self, template: TeamTemplate) -> None:
+        team_id = template.team_id
+        if self._store.instance(team_id) is None:
+            self._store.add_instance(
+                TeamInstance(
+                    team_id=team_id,
+                    template_id=template.template_id,
+                    title=template.title,
+                    description=template.description,
+                    idempotency_key=f"shipped:{template.template_id}",
+                    created_at=_now(),
+                )
             )
-            del revision
+        if self._store.revisions(team_id):
+            return
+        self._publish(
+            template,
+            config_from_template(template),
+            team_id=team_id,
+            suite_version="shipped",
+            evaluation_passed=True,
+            evaluation_note="Shipped template. Not an operator evaluation.",
+            kind="baseline",
+            previous="",
+        )
 
     def templates(self) -> tuple[TeamTemplate, ...]:
         return tuple(self._templates[key] for key in sorted(self._templates))
 
     def template(self, team_id: str) -> TeamTemplate:
-        found = self._templates.get(team_id)
+        """The trusted workflow for one installed team."""
+        found = self._store.instance(team_id)
         if found is None:
-            raise RevisionError("forbidden", "That team is not a supported template.")
-        return found
+            raise RevisionError("forbidden", "That team is not installed.")
+        template = self._templates.get(found.template_id)
+        if template is None:
+            raise RevisionError("forbidden", "That template is not supported.")
+        return template
+
+    def instances(self) -> tuple[TeamInstance, ...]:
+        return self._store.instances()
+
+    def instance(self, team_id: str) -> TeamInstance | None:
+        return self._store.instance(team_id)
+
+    def runnable(self, team_id: str) -> bool:
+        """True only after a revision has been activated."""
+        self.template(team_id)
+        return self._store.active_id(team_id) is not None
+
+    def presentation(self, team_id: str) -> tuple[TeamBundle, str, bool]:
+        """The bundle and title to show. An inactive team uses its draft."""
+        template = self.template(team_id)
+        if self._store.active_id(team_id) is not None:
+            revision = self.active(team_id)
+            return self.bundle_for(revision), revision.config.title, True
+        draft = self._store.draft_for_team(team_id)
+        config = draft.config if draft is not None else config_from_template(template)
+        return to_bundle(template, config, team_id), config.title, False
+
+    def roster(self) -> tuple[tuple[str, str, bool], ...]:
+        """Installed teams in creation order, including inactive drafts."""
+        rows: list[tuple[str, str, bool]] = []
+        for item in self.instances():
+            _bundle, title, runnable = self.presentation(item.team_id)
+            rows.append((item.team_id, title, runnable))
+        return tuple(rows)
+
+    def create_instance(
+        self,
+        template_id: str,
+        title: str,
+        description: str,
+        idempotency_key: str,
+        team_id: str | None = None,
+    ) -> tuple[TeamInstance, Draft | None]:
+        """Create one inactive team and its first draft.
+
+        The same key and the same normalized template, name, description, and
+        explicit team id return that team. They do not create another instance
+        or draft. A different template, name, description, or explicit team id
+        for that key is a conflict and leaves the original team unchanged.
+        No revision is activated and no connection assignment is copied.
+        """
+        template = self._templates.get(template_id)
+        if template is None:
+            raise RevisionError("forbidden", "That template is not supported.")
+        if _KEY.fullmatch(idempotency_key) is None:
+            raise RevisionError("invalid", "The creation request is not valid.")
+        config = _named_config(template, title, description)
+        with self._creation:
+            existing = self._store.instance_for_key(idempotency_key)
+            if existing is not None:
+                return self._repeat_creation(existing, template_id, config, team_id)
+            chosen = team_id if team_id is not None else self._new_id(template_id)
+            if not _allowed_id(chosen) or chosen in self._templates:
+                raise RevisionError("invalid", "That team id is not allowed.")
+            installed = self._store.instance(chosen)
+            if installed is not None:
+                if installed.idempotency_key == idempotency_key:
+                    return self._repeat_creation(installed, template_id, config, team_id)
+                raise RevisionError("conflict", "That team id is already installed.")
+            instance = TeamInstance(
+                team_id=chosen,
+                template_id=template.template_id,
+                title=config.title,
+                description=config.description,
+                idempotency_key=idempotency_key,
+                created_at=_now(),
+            )
+            draft = _draft_for(template, chosen, config)
+            try:
+                with self._store.transaction():
+                    self._store.add_instance(instance)
+                    self._store.save_draft(draft)
+            except (sqlite3.IntegrityError, ValueError):
+                winner = self._store.instance_for_key(idempotency_key)
+                if winner is not None:
+                    return self._repeat_creation(winner, template_id, config, team_id)
+                raise RevisionError("conflict", "That team id is already installed.") from None
+            return instance, draft
+
+    def _repeat_creation(
+        self,
+        existing: TeamInstance,
+        template_id: str,
+        config: TeamConfig,
+        team_id: str | None,
+    ) -> tuple[TeamInstance, Draft | None]:
+        same_template = existing.template_id == template_id
+        same_name = existing.title == config.title and existing.description == config.description
+        same_id = team_id is None or team_id == existing.team_id
+        if not (same_template and same_name and same_id):
+            raise RevisionError("conflict", "That request already created a different team.")
+        return existing, self._store.draft_for_team(existing.team_id)
+
+    def _new_id(self, template_id: str) -> str:
+        prefix = template_id if len(template_id) <= 40 else "team"
+        for _attempt in range(5):
+            candidate = f"{prefix}-{uuid.uuid4().hex[:8]}"
+            if self._store.instance(candidate) is None and candidate not in self._templates:
+                return candidate
+        raise RevisionError("conflict", "A team id could not be chosen.")
 
     def active(self, team_id: str) -> Revision:
         self.template(team_id)
@@ -108,15 +239,25 @@ class RevisionService:
         return self._store.activations(team_id)
 
     def bundle_for(self, revision: Revision) -> TeamBundle:
-        return to_bundle(self.template(revision.team_id), revision.config)
+        return to_bundle(self.template(revision.team_id), revision.config, revision.team_id)
 
     def create_draft(self, team_id: str) -> Draft:
-        """Copy the active revision. An open draft is returned unchanged."""
+        """Copy the active revision. An open draft is returned unchanged.
+
+        A team with no revision reopens from its stored name and description.
+        The draft belongs to that team, not to the template's shipped team.
+        """
         template = self.template(team_id)
         existing = self._store.draft_for_team(team_id)
         if existing is not None:
             return existing
-        return self._open_draft(template, self.active(team_id).config)
+        if self._store.active_id(team_id) is None:
+            record = self.instance(team_id)
+            if record is None:
+                raise RevisionError("forbidden", "That team is not installed.")
+            config = _named_config(template, record.title, record.description)
+            return self._open_draft(template, team_id, config)
+        return self._open_draft(template, team_id, self.active(team_id).config)
 
     def reset_from_template(self, team_id: str, expected_version: int | None = None) -> Draft:
         """Replace the open draft with the shipped template, or open that draft.
@@ -128,7 +269,7 @@ class RevisionService:
         config = config_from_template(template)
         existing = self._store.draft_for_team(team_id)
         if existing is None:
-            return self._open_draft(template, config)
+            return self._open_draft(template, team_id, config)
         if existing.version != expected_version:
             raise RevisionError(
                 "stale",
@@ -149,7 +290,16 @@ class RevisionService:
 
     def shipped_changes(self, team_id: str) -> tuple[FieldChange, ...]:
         """Differences between the shipped template and the active revision."""
+        if self._store.active_id(team_id) is None:
+            return ()
         return self.changes(team_id, config_from_template(self.template(team_id)))
+
+    def comparison(self, team_id: str, config: TeamConfig) -> tuple[str, tuple[FieldChange, ...]]:
+        """Diff a draft against the active revision, or the shipped template."""
+        if self._store.active_id(team_id) is None:
+            base = config_from_template(self.template(team_id))
+            return "shipped template", _diff(base, config)
+        return "active revision", self.changes(team_id, config)
 
     def draft(self, team_id: str, draft_id: str) -> Draft:
         found = self._require_draft(team_id, draft_id)
@@ -248,7 +398,7 @@ class RevisionService:
             team_id=team_id,
             version=current.version,
             content_hash=current.content_hash,
-            bundle=to_bundle(template, current.config),
+            bundle=to_bundle(template, current.config, team_id),
         )
 
     def record_evaluation(
@@ -346,25 +496,18 @@ class RevisionService:
                 )
             )
             raise RevisionError("invalid", "Validation failed. Activation stays off.")
-        try:
-            self.baseline(team_id)
-        except RevisionError:
-            raise RevisionError(
-                "incompatible",
-                (
-                    "A pending run cannot keep its original revision because "
-                    "no shipped revision exists."
-                ),
-            ) from None
-        previous = self.active(team_id)
+        previous = ""
+        if self._store.revisions(team_id):
+            previous = self.active(team_id).revision_id
         return self._publish(
             template,
             current.config,
+            team_id=team_id,
             suite_version=readiness.suite_version,
             evaluation_passed=True,
             evaluation_note=readiness.note,
             kind="activate",
-            previous=previous.revision_id,
+            previous=previous,
         )
 
     def rollback(self, team_id: str, revision_id: str) -> Activation:
@@ -397,57 +540,7 @@ class RevisionService:
         return item
 
     def changes(self, team_id: str, config: TeamConfig) -> tuple[FieldChange, ...]:
-        current = self.active(team_id).config
-        rows: list[FieldChange] = []
-        if current.title != config.title:
-            rows.append(FieldChange(label="Title", before=current.title, after=config.title))
-        if current.description != config.description:
-            rows.append(
-                FieldChange(
-                    label="Description",
-                    before=current.description,
-                    after=config.description,
-                )
-            )
-        for before, after in zip(current.agents, config.agents, strict=False):
-            label = before.name
-            if before.purpose != after.purpose:
-                rows.append(
-                    FieldChange(
-                        label=f"{label} purpose",
-                        before=before.purpose,
-                        after=after.purpose,
-                    )
-                )
-            if before.instructions != after.instructions:
-                rows.append(
-                    FieldChange(
-                        label=f"{label} instructions",
-                        before=before.instructions,
-                        after=after.instructions,
-                    )
-                )
-            if before.provider != after.provider:
-                rows.append(
-                    FieldChange(
-                        label=f"{label} provider",
-                        before=before.provider,
-                        after=after.provider,
-                    )
-                )
-            if before.model != after.model:
-                rows.append(
-                    FieldChange(label=f"{label} model", before=before.model, after=after.model)
-                )
-            if before.tools != after.tools:
-                rows.append(
-                    FieldChange(
-                        label=f"{label} tools",
-                        before=", ".join(before.tools) or "none",
-                        after=", ".join(after.tools) or "none",
-                    )
-                )
-        return tuple(rows)
+        return _diff(self.active(team_id).config, config)
 
     def credential_notes(self, config: TeamConfig) -> tuple[str, ...]:
         """Report missing accounts without revealing secret values."""
@@ -504,16 +597,17 @@ class RevisionService:
         template: TeamTemplate,
         config: TeamConfig,
         *,
+        team_id: str,
         suite_version: str,
         evaluation_passed: bool,
         evaluation_note: str,
         kind: Literal["baseline", "activate", "rollback"],
         previous: str,
     ) -> Activation:
-        number = len(self._store.revisions(template.team_id)) + 1
+        number = len(self._store.revisions(team_id)) + 1
         revision = Revision(
             revision_id=uuid.uuid4().hex,
-            team_id=template.team_id,
+            team_id=team_id,
             template_id=template.template_id,
             number=number,
             content_hash=content_hash(config),
@@ -525,7 +619,7 @@ class RevisionService:
         )
         item = Activation(
             activation_id=uuid.uuid4().hex,
-            team_id=template.team_id,
+            team_id=team_id,
             revision_id=revision.revision_id,
             previous_revision_id=previous,
             content_hash=revision.content_hash,
@@ -534,7 +628,7 @@ class RevisionService:
         )
         with self._store.transaction():
             self._store.add_revision(revision)
-            self._store.set_active(template.team_id, revision.revision_id)
+            self._store.set_active(team_id, revision.revision_id)
             self._store.add_activation(item)
         return item
 
@@ -556,10 +650,10 @@ class RevisionService:
             return self.baseline(team_id)
         return found
 
-    def _open_draft(self, template: TeamTemplate, config: TeamConfig) -> Draft:
+    def _open_draft(self, template: TeamTemplate, team_id: str, config: TeamConfig) -> Draft:
         draft = Draft(
             draft_id=uuid.uuid4().hex,
-            team_id=template.team_id,
+            team_id=team_id,
             template_id=template.template_id,
             version=1,
             config=config,
@@ -599,6 +693,83 @@ class RevisionService:
 
 def _unconfigured(_provider: str) -> bool:
     return False
+
+
+def _allowed_id(value: str) -> bool:
+    return (
+        len(value) <= 80
+        and _TEAM_ID.fullmatch(value) is not None
+        and value not in _RESERVED
+        and "/" not in value
+        and "\\" not in value
+        and ".." not in value
+    )
+
+
+def _named_config(template: TeamTemplate, title: str, description: str) -> TeamConfig:
+    """Apply the template, then the same whitespace rules as ``TeamConfig``."""
+    payload = config_from_template(template).model_dump()
+    payload["title"] = title
+    payload["description"] = description
+    try:
+        config = TeamConfig.model_validate(payload)
+    except ValidationError:
+        raise RevisionError("invalid", "The team name is not supported.") from None
+    findings = [item for item in validate_config(template, config) if item.code == "secret"]
+    if findings:
+        raise RevisionError("invalid", findings[0].message)
+    return config
+
+
+def _draft_for(template: TeamTemplate, team_id: str, config: TeamConfig) -> Draft:
+    return Draft(
+        draft_id=uuid.uuid4().hex,
+        team_id=team_id,
+        template_id=template.template_id,
+        version=1,
+        config=config,
+        content_hash=content_hash(config),
+        updated_at=_now(),
+    )
+
+
+def _diff(current: TeamConfig, config: TeamConfig) -> tuple[FieldChange, ...]:
+    rows: list[FieldChange] = []
+    if current.title != config.title:
+        rows.append(FieldChange(label="Title", before=current.title, after=config.title))
+    if current.description != config.description:
+        rows.append(
+            FieldChange(label="Description", before=current.description, after=config.description)
+        )
+    for before, after in zip(current.agents, config.agents, strict=False):
+        label = before.name
+        if before.purpose != after.purpose:
+            rows.append(
+                FieldChange(label=f"{label} purpose", before=before.purpose, after=after.purpose)
+            )
+        if before.instructions != after.instructions:
+            rows.append(
+                FieldChange(
+                    label=f"{label} instructions",
+                    before=before.instructions,
+                    after=after.instructions,
+                )
+            )
+        if before.provider != after.provider:
+            rows.append(
+                FieldChange(label=f"{label} provider", before=before.provider, after=after.provider)
+            )
+        if before.model != after.model:
+            rows.append(FieldChange(label=f"{label} model", before=before.model, after=after.model))
+        if before.tools != after.tools:
+            rows.append(
+                FieldChange(
+                    label=f"{label} tools",
+                    before=", ".join(before.tools) or "none",
+                    after=", ".join(after.tools) or "none",
+                )
+            )
+    return tuple(rows)
 
 
 def _parse_config(payload: Mapping[str, object]) -> TeamConfig:

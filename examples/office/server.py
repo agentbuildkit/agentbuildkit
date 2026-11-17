@@ -4,12 +4,14 @@ A URL names a team so the page can be rendered. Ownership of a run or an
 approval is checked against that team's store. The selector is not the check.
 """
 
+import argparse
 import asyncio
 import re
 import secrets
 import threading
 from collections.abc import Callable, Coroutine
 from concurrent.futures import Future
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, cast
@@ -25,6 +27,7 @@ from customer_service.dashboard import (
     form_field,
     security_headers,
 )
+from customer_service.draft_pages import create_team_page
 from customer_service.models import FinalOutcome
 from office.installation import Installation, build_installation
 from office.reporting import ReportingDashboard
@@ -170,6 +173,10 @@ def serve_installation(
             length = int(self.headers.get("Content-Length", "0"))
             fields = parse_qs(self.rfile.read(length).decode())
             path = urlsplit(self.path).path
+            if path == "/teams/new":
+                location = cast(str, on_owner(lambda: _create_team(installation, fields)))
+                self._redirect(location)
+                return
             if path.endswith("/connections/connect"):
                 self._redirect(self._connect(path))
                 return
@@ -275,6 +282,13 @@ def _legacy_target(installation: Installation, path: str) -> str | None:
 
 
 def _render(installation: Installation, path: str, query: dict[str, str]) -> RenderedPage:
+    if path == "/teams/new":
+        page = create_team_page(
+            installation.customer.snapshot(),
+            installation.revisions.templates(),
+            query,
+        )
+        return RenderedPage(status=page.status, body=page.body)
     match = _TEAM_PATH.fullmatch(path)
     if match is None:
         return installation.customer.rendered_page("/404")
@@ -311,7 +325,7 @@ def _post(
         return f"/teams/{team_id}/"
     rest = match.group("rest") or "/"
     if rest == "/run":
-        return _run(installation, team, fields, invoke)
+        return _run(installation, team, fields, invoke, on_owner)
     if rest == "/decide":
         return _decide(installation, team, fields, invoke, on_owner)
     if rest == "/evaluate":
@@ -331,13 +345,33 @@ def _post(
     return f"/teams/{team_id}/"
 
 
+def _create_team(installation: Installation, fields: dict[str, list[str]]) -> str:
+    try:
+        instance, draft = installation.revisions.create_instance(
+            template_id=form_field(fields, "template_id"),
+            title=form_field(fields, "title"),
+            description=form_field(fields, "description"),
+            idempotency_key=form_field(fields, "idempotency_key"),
+        )
+        installation.open_instance(instance.team_id)
+    except RevisionError as exc:
+        return f"/teams/new?notice={exc.code}"
+    if draft is None:
+        return f"/teams/{instance.team_id}/drafts"
+    return f"/teams/{instance.team_id}/drafts/{draft.draft_id}"
+
+
 def _run(
     installation: Installation,
     team: Any,
     fields: dict[str, list[str]],
     invoke: Callable[[Coroutine[Any, Any, object]], object | None],
+    on_owner: Callable[[Callable[[], object]], object],
 ) -> str:
-    del installation
+    runnable = on_owner(lambda: installation.revisions.runnable(team.team_id))
+    if not runnable:
+        team.error = "This team is not active. Activate a revision before running it."
+        return f"/teams/{team.team_id}/"
     if isinstance(team, ReportingDashboard):
         as_of = form_field(fields, "as_of")
         note = form_field(fields, "note")
@@ -467,7 +501,13 @@ def _evaluate_draft(
         )
     except RevisionError as exc:
         return _draft_target(team_id, rest, exc.code)
-    evaluator = installed_evaluators().get(team_id)
+
+    def _template_id() -> str:
+        found = installation.revisions.instance(team_id)
+        return "" if found is None else found.template_id
+
+    template_id = cast(str, on_owner(_template_id))
+    evaluator = installed_evaluators().get(template_id)
     pending = None if evaluator is None else evaluator(prepared.bundle)
     report = None if pending is None else invoke(cast(Coroutine[Any, Any, object], pending))
     if not isinstance(report, EvaluationReport):
@@ -569,20 +609,68 @@ async def _close(installation: Installation) -> None:
         installation.close()
 
 
-def main() -> None:
+@dataclass(frozen=True)
+class DashboardOptions:
+    """Arguments for one local dashboard process."""
+
+    state_directory: str | None
+    host: str
+    port: int
+
+
+def dashboard_options(argv: list[str] | None = None) -> DashboardOptions:
+    """Parse the dashboard command. ``--help`` exits before any state is opened."""
+    parser = argparse.ArgumentParser(prog="customer_service.dashboard")
+    parser.add_argument(
+        "--state-directory",
+        default=None,
+        help="Directory for this process. Overrides APP_STATE_DIRECTORY from .env and the shell.",
+    )
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=0)
+    parsed = parser.parse_args(argv)
+    state = parsed.state_directory
+    host = parsed.host
+    port = parsed.port
+    if state is not None and not isinstance(state, str):
+        raise SystemExit(2)
+    if not isinstance(host, str) or not isinstance(port, int):
+        raise SystemExit(2)
+    return DashboardOptions(state_directory=state, host=host, port=port)
+
+
+def dashboard_state_directory(argv: list[str] | None = None) -> str | None:
+    """Resolve the state directory the dashboard will open."""
+    return _state_from_options(dashboard_options(argv))
+
+
+def _state_from_options(options: DashboardOptions) -> str | None:
+    from customer_service.cli import selected_state_directory
+
+    env_file = Path.cwd() / ".env"
+    try:
+        return selected_state_directory(
+            options.state_directory,
+            env_file if env_file.is_file() else None,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+
+
+def main(argv: list[str] | None = None) -> None:
     """Open the local dashboard for both installed teams."""
+    options = dashboard_options(argv)
 
     def open_installation() -> Installation:
         from agentbuildkit.config import load_composio_settings
         from agentbuildkit.integrations.composio import ComposioUnavailable, LiveComposioGateway
         from agentbuildkit.providers import ProviderConfiguration, builtin_registry
-        from customer_service.cli import state_directory
         from customer_service.team import production_clients
         from operations_reporting.team import reporting_bundle
 
         env_file = Path.cwd() / ".env"
         env_path = str(env_file) if env_file.is_file() else None
-        directory = state_directory(env_file if env_file.is_file() else None)
+        directory = _state_from_options(options)
         composio = load_composio_settings(env_file_path=env_path)
         gateway = None
         package_missing = False
@@ -611,7 +699,7 @@ def main() -> None:
             package_missing=package_missing,
         )
 
-    binding = serve_installation(open_installation)
+    binding = serve_installation(open_installation, host=options.host, port=options.port)
     address = binding.server_address
     print(f"Dashboard at http://{address[0]}:{address[1]}")
     try:

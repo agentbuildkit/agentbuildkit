@@ -144,6 +144,17 @@ class RunPin(RevisionModel):
     revision_id: str
 
 
+class TeamInstance(RevisionModel):
+    """One installed team. Its id is not the template id and not the display name."""
+
+    team_id: str
+    template_id: str
+    title: str
+    description: str
+    idempotency_key: str
+    created_at: str
+
+
 class FieldChange(RevisionModel):
     """One readable difference between the active revision and a draft."""
 

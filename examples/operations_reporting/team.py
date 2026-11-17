@@ -70,8 +70,6 @@ def build_team(
     """
     log = audit_log or AuditLog()
     bundle = reporting_bundle() if bundle is None else bundle
-    if bundle.team_id != TEAM_ID:
-        raise ValueError("The operations-reporting bundle id does not match the application.")
     definitions = bundle.definitions(schemas=_SCHEMAS, tools={"read_jobs": read_jobs})
     if tuple(item.name for item in definitions) != ("analyst", "reviewer"):
         raise ValueError("The operations-reporting bundle does not match the application.")

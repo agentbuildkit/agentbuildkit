@@ -109,7 +109,7 @@ That is the production harness running locally, with the model text supplied by 
 
 This release includes the Python package `agentbuildkit`, the `agentkit` command, and the Node bootstrapper in `npm/agentbuildkit`. Microsoft Foundry is an optional extra and is not installed by a normal sync.
 
-Skills and persistent agent memory are not in this release. The harness loads declarative team bundles. One local dashboard installs Customer Service and Operations Reporting. Each team keeps its own runs, approvals, audit, and spreadsheet window. Drafts on the Drafts page version those two installed teams. They do not install another team. Set `APP_STATE_DIRECTORY` to keep those drafts in `revisions.sqlite`. The scripted check does not measure a live model. Google Sheets stays optional, and the key stays on the server.
+Skills and persistent agent memory are not in this release. The harness loads declarative team bundles. One local dashboard installs Customer Service and Operations Reporting, and Create team can add another inactive instance of either template. Each instance keeps its own runs, approvals, audit, revisions, and spreadsheet window. A new instance cannot run until its draft is validated, evaluated offline, and activated. Set `APP_STATE_DIRECTORY` to keep instances and drafts in `revisions.sqlite`. When that name is in `.env`, it overrides the shell. Use `--state-directory` to choose a different directory for one process. The scripted check does not measure a live model or account readiness. Google Sheets stays optional, and the key stays on the server.
 
 `examples/customer_service` is a separate example with fixture data. It is not the offline demo and it is not part of the installed package.
 

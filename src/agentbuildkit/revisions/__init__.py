@@ -10,6 +10,7 @@ from agentbuildkit.revisions.models import (
     Revision,
     RevisionError,
     TeamConfig,
+    TeamInstance,
     TeamTemplate,
 )
 from agentbuildkit.revisions.service import RevisionService
@@ -28,5 +29,6 @@ __all__ = [
     "RevisionService",
     "SqliteRevisionStore",
     "TeamConfig",
+    "TeamInstance",
     "TeamTemplate",
 ]

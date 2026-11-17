@@ -20,11 +20,16 @@ READ_JOBS = "read_jobs"
 class JobWindow:
     """Demo jobs, or one explicitly assigned sheet window."""
 
-    def __init__(self, store: ConnectionStore, gateway: ComposioGateway | None) -> None:
+    def __init__(
+        self,
+        store: ConnectionStore,
+        gateway: ComposioGateway | None,
+        team_id: str = TEAM_ID,
+    ) -> None:
         self.desk = SheetDesk(
             store,
             gateway,
-            team_id=TEAM_ID,
+            team_id=team_id,
             agent_name=ANALYST,
             tool_name=READ_JOBS,
         )

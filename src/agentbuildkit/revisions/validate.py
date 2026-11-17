@@ -44,7 +44,7 @@ def config_from_template(template: TeamTemplate) -> TeamConfig:
     )
 
 
-def to_bundle(template: TeamTemplate, config: TeamConfig) -> TeamBundle:
+def to_bundle(template: TeamTemplate, config: TeamConfig, team_id: str) -> TeamBundle:
     """Build a version-one bundle. Schemas and role names come from the template."""
     by_name = {agent.name: agent for agent in config.agents}
     agents: list[BundleAgent] = []
@@ -64,8 +64,8 @@ def to_bundle(template: TeamTemplate, config: TeamConfig) -> TeamBundle:
         )
     return TeamBundle(
         schema_version="1",
-        name=template.team_id,
-        id=template.team_id,
+        name=team_id,
+        id=team_id,
         title=config.title,
         agents=tuple(agents),
     )

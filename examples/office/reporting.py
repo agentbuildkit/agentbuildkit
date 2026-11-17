@@ -11,7 +11,7 @@ from typing import Any
 from agentbuildkit.applications import RenderedPage
 from agentbuildkit.evaluation import EvaluationReport
 from agentbuildkit.observability import AuditEvent
-from agentbuildkit.revisions import Revision, RevisionService
+from agentbuildkit.revisions import Revision, RevisionError, RevisionService
 from agentbuildkit.state.models import RegistryRejected, require_argument_hash
 from agentbuildkit.teams import TeamBundle
 from agentbuildkit.workflows import WorkflowStateStore
@@ -29,7 +29,7 @@ from customer_service.recovery import ActionRecovery, MemoryActionRecovery
 from operations_reporting.jobs import parse_as_of
 from operations_reporting.service import handle_report
 from operations_reporting.sheets import ANALYST, JobWindow
-from operations_reporting.team import REPORTING_DIAGRAM, TEAM_ID, ReportingTeam, reporting_bundle
+from operations_reporting.team import REPORTING_DIAGRAM, ReportingTeam, reporting_bundle
 
 Evaluate = Callable[[], Coroutine[Any, Any, EvaluationReport]]
 TeamFactory = Callable[[TeamBundle], ReportingTeam]
@@ -49,10 +49,10 @@ class ReportingDashboard:
         revisions: RevisionService | None = None,
         team_factory: TeamFactory | None = None,
     ) -> None:
-        if store.scope != TEAM_ID:
+        if window.desk.team_id != store.scope:
             raise RuntimeError("The operations store does not match the team.")
         self.team = team
-        self.team_id = TEAM_ID
+        self.team_id = store.scope
         self.title = reporting_bundle().display_name
         self.store = store
         self.window = window
@@ -68,12 +68,17 @@ class ReportingDashboard:
         self.draft: tuple[str, str] | None = None
         self._evaluate = evaluate
         team.audit_log.add_sink(_LedgerSink(store))
-        self.outcomes: list[FinalOutcome] = list(recovery.outcomes(TEAM_ID))
+        self.outcomes: list[FinalOutcome] = list(recovery.outcomes(self.team_id))
 
     async def submit(self, as_of: str, note: str) -> FinalOutcome:
         """Draft one report. The team id is fixed before the model runs."""
         team_id = self.team_id
         parse_as_of(as_of)
+        if self.revisions is not None and not self.revisions.runnable(team_id):
+            raise RevisionError(
+                "inactive",
+                "This team is not active. Activate a revision before running it.",
+            )
         revision = self.revisions.active(team_id) if self.revisions is not None else None
         team = self._for_revision(revision)
         correlation_id = uuid.uuid4().hex
@@ -143,19 +148,20 @@ class ReportingDashboard:
         )
 
     def snapshot(self) -> Snapshot:
+        runnable = True
+        activity: tuple[tuple[str, str], ...] = ()
         if self.revisions is None:
             bundle = reporting_bundle()
             title = bundle.display_name
             installed = self.installed
         else:
-            revision = self.revisions.active(self.team_id)
-            bundle = self.revisions.bundle_for(revision)
-            title = revision.config.title
-            installed = tuple(
-                (team_id, self.revisions.active(team_id).config.title)
-                for team_id, _title in self.installed
+            bundle, title, runnable = self.revisions.presentation(self.team_id)
+            installed = tuple((team_id, label) for team_id, label, _flag in self.revisions.roster())
+            activity = tuple(
+                (team_id, "Active" if flag else "Draft")
+                for team_id, _label, flag in self.revisions.roster()
             )
-        mode = self.window.desk.store.data_mode(TEAM_ID, ANALYST)
+        mode = self.window.desk.store.data_mode(self.team_id, ANALYST)
         return Snapshot(
             team_name=bundle.team_id,
             team_id=self.team_id,
@@ -170,7 +176,7 @@ class ReportingDashboard:
             subject_label="As of",
             form="operations",
             sheet_agent=ANALYST,
-            footnote="One local operator. This team cannot see customer-service runs.",
+            footnote="One local operator. This team cannot see another team's runs.",
             agents=tuple(
                 AgentInfo(
                     name=agent.name,
@@ -202,6 +208,8 @@ class ReportingDashboard:
             sam_mode=mode,
             diagram=REPORTING_DIAGRAM,
             actor_label="Handled by",
+            runnable=runnable,
+            activity=activity,
         )
 
     def _connections(self) -> tuple[ConnectionInfo, ...]:
@@ -223,7 +231,7 @@ class ReportingDashboard:
     def _assignments(self) -> tuple[AssignmentInfo, ...]:
         by_id = {item.connection_id: item for item in self.window.desk.store.connections()}
         views: list[AssignmentInfo] = []
-        for row in self.window.desk.store.assignments(TEAM_ID):
+        for row in self.window.desk.store.assignments(self.team_id):
             connection = by_id.get(row.connection_id)
             views.append(
                 AssignmentInfo(
