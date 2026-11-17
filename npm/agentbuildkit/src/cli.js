@@ -12,11 +12,14 @@ const { resolveSource } = require("./source");
 const { ensureUv, installUv } = require("./uv");
 
 const DEMO_PROMPT = "Run the production harness demo? [Y/n] ";
+const DASHBOARD_PROMPT = "Open the local dashboard? It does not call a model. [Y/n] ";
 
 function parseArgs(argv, env = process.env) {
   const options = {
     help: false,
     noDemo: false,
+    noDashboard: false,
+    stateDirectory: "",
     verbose: false,
     upgrade: false,
     installMissingUv: false,
@@ -28,6 +31,15 @@ function parseArgs(argv, env = process.env) {
       options.help = true;
     } else if (arg === "--no-demo") {
       options.noDemo = true;
+    } else if (arg === "--no-dashboard") {
+      options.noDashboard = true;
+    } else if (arg === "--state-directory") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new BootstrapError("--state-directory needs a directory path.");
+      }
+      options.stateDirectory = value;
+      index += 1;
     } else if (arg === "--verbose") {
       options.verbose = true;
     } else if (arg === "--upgrade") {
@@ -53,33 +65,42 @@ function helpText() {
     "AgentBuildKit",
     "Build agents. Not demos.",
     "",
-    "Install the Python AgentBuildKit CLI into a uv-managed environment.",
+    "Install the Python harness and the first-party templates.",
+    "The upcoming 0.2.0 release is not the published npm 0.0.2 package.",
     "",
     "Usage:",
     "  npx agentbuildkit",
-    "  npx agentbuildkit --no-demo",
+    "  npx agentbuildkit --no-demo --no-dashboard",
+    "  npx agentbuildkit --state-directory /ABSOLUTE/PATH/agentbuildkit-state",
     "  npx agentbuildkit --source local",
     "",
     "Options:",
-    "  --help       Show this help",
-    "  --no-demo    Do not run agentkit demo",
-    "  --upgrade     Reinstall from the selected source",
-    "  --install-uv Allow Astral's uv installer when uv is missing",
-    "  --source     package (default), local, or a repository path",
-    "  --verbose    Show error details",
+    "  --help            Show this help",
+    "  --no-demo         Do not run agentkit demo",
+    "  --no-dashboard    Do not open the local dashboard",
+    "  --state-directory Directory kept for the dashboard when you open it",
+    "  --upgrade         Reinstall the harness and templates",
+    "  --install-uv      Allow Astral's uv installer when uv is missing",
+    "  --source          package (default), local, or a repository path",
+    "  --verbose         Show error details",
     "",
     "Environment:",
     "  AGENTBUILDKIT_SOURCE    Same values as --source",
     "",
-    "The default source installs the published agentbuildkit Python package with uv.",
-    "That published package provides version, doctor, and the offline demo.",
-    "It does not include the dashboard or the drafting templates.",
+    "The default source installs agentbuildkit>=0.2.0,<0.3.0 and",
+    "agentbuildkit-templates>=0.2.0,<0.3.0. It does not install Composio or Foundry.",
+    "The published npm 0.0.2 package installs the harness only.",
+    "A harness-only tool install is upgraded with the templates package.",
     "--source local installs this checkout and the examples/ templates package.",
-    "That local install is not the published npx package.",
+    "",
+    "An interactive terminal explains the state directory and can open the dashboard.",
+    "The dashboard stays in this terminal. Press Ctrl+C to stop it.",
+    "It does not call a model. A non-interactive run does not open it.",
     "",
     "After installation:",
     "  agentkit doctor",
     "  agentkit demo",
+    "  agentkit dashboard --state-directory /ABSOLUTE/PATH/agentbuildkit-state",
     "  uv tool uninstall agentbuildkit",
     "",
   ].join("\n");
@@ -117,20 +138,23 @@ async function bootstrap(options) {
     readFile: options.readFile,
     exists: options.exists,
   });
+  const locate = () =>
+    locateAgentkit({
+      uv: uv.command,
+      run: options.run,
+      find: options.findExecutable,
+    });
   const installed = await installProduct({
     uv: uv.command,
     source,
     upgrade: options.upgrade,
     run: options.run,
     log,
+    locate,
   });
   log(installed.already ? "✓ AgentBuildKit already installed" : "✓ AgentBuildKit installed");
 
-  const agentkit = await locateAgentkit({
-    uv: uv.command,
-    run: options.run,
-    find: options.findExecutable,
-  });
+  const agentkit = await locate();
   if (!agentkit.onPath) {
     log("");
     log(`agentkit is installed at ${agentkit.command}`);
@@ -146,6 +170,11 @@ async function bootstrap(options) {
   log("✓ Runtime healthy");
   log("");
   log("AgentBuildKit is ready.");
+  log("");
+  for (const line of stateDirectoryLines(options.stateDirectory)) {
+    log(line);
+  }
+  await offerDashboard(options, agentkit.command);
 
   if (options.noDemo) {
     log("Demo skipped. Run `agentkit demo` when you want it.");
@@ -171,6 +200,54 @@ async function bootstrap(options) {
     throw new BootstrapError("agentkit demo failed. Run `agentkit demo` to see the result.");
   }
   return 0;
+}
+
+function stateDirectoryLines(stateDirectory) {
+  const lines = [
+    "The dashboard keeps teams, drafts, approvals, and the audit log in one directory.",
+    "A --state-directory path is kept after the process stops.",
+    "Without that flag, a .env file in the current directory wins over APP_STATE_DIRECTORY in the shell.",
+    "With none of those, the state lasts only until the dashboard stops.",
+    "Starting the dashboard does not call a model.",
+  ];
+  if (stateDirectory) {
+    lines.push(`This launch will use ${stateDirectory}.`);
+  }
+  return lines;
+}
+
+async function offerDashboard(options, agentkit) {
+  const log = options.log;
+  if (options.noDashboard) {
+    log("Dashboard skipped. Run `agentkit dashboard --state-directory DIRECTORY` when you want it.");
+    return;
+  }
+  if (!options.interactive) {
+    log("Dashboard skipped because this terminal is not interactive.");
+    log("Run `agentkit dashboard --state-directory DIRECTORY` when you want it.");
+    return;
+  }
+  const accepted = await options.ask(DASHBOARD_PROMPT, {
+    input: options.input,
+    output: options.output,
+    interactive: true,
+  });
+  if (!accepted) {
+    log("Dashboard skipped. Run `agentkit dashboard --state-directory DIRECTORY` when you want it.");
+    return;
+  }
+  log("The dashboard runs in this terminal. Press Ctrl+C to stop it.");
+  releaseInput(options.input);
+  const args = ["dashboard"];
+  if (options.stateDirectory) {
+    args.push("--state-directory", options.stateDirectory);
+  }
+  const dashboard = await options.run(agentkit, args, { stdio: "inherit" });
+  if (dashboard.code === 0 || dashboard.code === 130) {
+    log("Dashboard stopped.");
+    return;
+  }
+  throw new BootstrapError("agentkit dashboard stopped. Run `agentkit dashboard` to see the result.");
 }
 
 function runtimeDefaults() {
@@ -224,4 +301,4 @@ function writeError(error, verbose) {
   process.stderr.write("Run again with --verbose for details.\n");
 }
 
-module.exports = { DEMO_PROMPT, bootstrap, helpText, main, parseArgs };
+module.exports = { DASHBOARD_PROMPT, DEMO_PROMPT, bootstrap, helpText, main, parseArgs };

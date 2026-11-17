@@ -80,7 +80,7 @@ function uvScript() {
   return `#!/bin/sh
 if [ "$1" = "tool" ] && [ "$2" = "list" ]; then
   if [ -n "\${ABK_INSTALLED:-}" ]; then
-    echo "agentbuildkit v0.1.0"
+    echo "agentbuildkit v0.2.0"
   else
     echo "No tools installed"
   fi
@@ -102,6 +102,7 @@ exit 1
 function agentkitScript() {
   return `#!/bin/sh
 if [ "$1" = "doctor" ]; then
+  echo "Templates           installed        ✓"
   echo "Status: ready for offline demo"
   exit 0
 fi
@@ -152,6 +153,7 @@ def alive(child):
     return True
 
 buf = b""
+sent_dashboard = False
 sent_demo = False
 sent_approval = False
 deadline = time.time() + 8
@@ -168,6 +170,9 @@ while time.time() < deadline:
     if not chunk:
         break
     buf += chunk
+    if not sent_dashboard and b"Open the local dashboard?" in buf:
+        sent_dashboard = True
+        os.write(fd, b"n\\r")
     if not sent_demo and b"Run the production harness demo?" in buf:
         sent_demo = True
         os.write(fd, b"y\\r")

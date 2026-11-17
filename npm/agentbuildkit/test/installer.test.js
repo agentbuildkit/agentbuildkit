@@ -7,7 +7,7 @@ const { bootstrap, DEMO_PROMPT } = require("../src/cli");
 const { UV_INSTALL_PROMPT } = require("../src/uv");
 const { BootstrapError } = require("../src/errors");
 const { askYesNo } = require("../src/prompt");
-const { installArguments, resolveSource } = require("../src/source");
+const { HARNESS_SPEC, TEMPLATES_SPEC, installArguments, resolveSource } = require("../src/source");
 
 const secret = "sk-bootstrap-secret";
 const repository = "/Users/me/My Repo";
@@ -20,7 +20,9 @@ test("local and package install commands keep paths as single arguments", () => 
     "--python",
     "3.12",
     "--managed-python",
-    "agentbuildkit",
+    "--with",
+    TEMPLATES_SPEC,
+    HARNESS_SPEC,
   ]);
   assert.deepEqual(
     installArguments({ kind: "local", path: repository }, { upgrade: true }),
@@ -54,7 +56,9 @@ test("local source resolves the repository that declares agentbuildkit", () => {
 test("package source does not point at a local directory", () => {
   const source = resolveSource("package", { cwd: repository, scriptDir: repository });
   assert.deepEqual(source, { kind: "package", name: "agentbuildkit" });
-  assert.deepEqual(installArguments(source).at(-1), "agentbuildkit");
+  assert.deepEqual(installArguments(source).at(-1), HARNESS_SPEC);
+  assert.equal(installArguments(source).includes("composio"), false);
+  assert.equal(installArguments(source).includes("foundry"), false);
 });
 
 test("uv that is already installed is reused", async () => {
@@ -108,6 +112,7 @@ test("an interactive yes installs missing uv", async () => {
   let prompt = "";
   const harness = createHarness({
     noDemo: true,
+    noDashboard: true,
     interactive: true,
     find(name) {
       if (name === "uv") {
@@ -195,7 +200,7 @@ test("an interactive yes runs agentkit demo", async () => {
     interactive: true,
     ask(value) {
       prompt = value;
-      return true;
+      return value === DEMO_PROMPT;
     },
   });
   await harness.run();
@@ -224,6 +229,7 @@ test("--no-demo skips the prompt", async () => {
   let asked = false;
   const harness = createHarness({
     noDemo: true,
+    noDashboard: true,
     interactive: true,
     ask() {
       asked = true;
@@ -253,6 +259,10 @@ test("a non-interactive terminal does not wait for input", async () => {
     harness.lines.includes("Demo skipped because this terminal is not interactive."),
     true,
   );
+  assert.equal(
+    harness.lines.includes("Dashboard skipped because this terminal is not interactive."),
+    true,
+  );
 });
 
 test("install arguments preserve a repository path that contains spaces", async () => {
@@ -272,13 +282,60 @@ test("a second run does not install AgentBuildKit again", async () => {
   harness.lines.length = 0;
   harness.responses.length = 0;
   harness.responses.push(
-    { code: 0, stdout: "agentbuildkit v0.1.0\n- agentkit\n", stderr: "" },
+    { code: 0, stdout: "agentbuildkit v0.2.0\n- agentkit\n", stderr: "" },
     { code: 0, stdout: `${binDir}\n`, stderr: "" },
-    { code: 0, stdout: "AgentBuildKit Doctor\nStatus: ready for offline demo\n", stderr: "" },
+    { code: 0, stdout: "Templates           installed        ✓\n", stderr: "" },
+    { code: 0, stdout: `${binDir}\n`, stderr: "" },
+    { code: 0, stdout: "AgentBuildKit Doctor\nTemplates           installed        ✓\n", stderr: "" },
   );
   await harness.run();
   assert.equal(callsNamed(harness, "tool", "install").length, firstInstalls);
   assert.equal(harness.lines.includes("✓ AgentBuildKit already installed"), true);
+});
+
+test("a harness-only installation is upgraded with the templates package", async () => {
+  const harness = createHarness({ source: "package" });
+  harness.responses.length = 0;
+  harness.responses.push(
+    { code: 0, stdout: "agentbuildkit v0.1.0\n- agentkit\n", stderr: "" },
+    { code: 0, stdout: `${binDir}\n`, stderr: "" },
+    { code: 0, stdout: "AgentBuildKit Doctor\nStatus: ready for offline demo\n", stderr: "" },
+    { code: 0, stdout: "", stderr: "" },
+    { code: 0, stdout: `${binDir}\n`, stderr: "" },
+    { code: 0, stdout: "Templates           installed        ✓\n", stderr: "" },
+  );
+  const code = await harness.run();
+  assert.equal(code, 0);
+  const install = callsNamed(harness, "tool", "install")[0];
+  assert.equal(install.args.includes("--force"), true);
+  assert.equal(install.args.includes(TEMPLATES_SPEC), true);
+  assert.equal(install.args.includes(HARNESS_SPEC), true);
+  assert.equal(install.args.includes("composio"), false);
+  assert.equal(
+    harness.lines.includes("An older harness-only installation is missing the templates package."),
+    true,
+  );
+});
+
+test("an interactive yes runs the dashboard in the foreground", async () => {
+  const harness = createHarness({
+    noDemo: true,
+    interactive: true,
+    stateDirectory: "/tmp/agentbuildkit-state",
+    ask(value) {
+      return value.includes("dashboard");
+    },
+  });
+  const code = await harness.run();
+  assert.equal(code, 0);
+  const explanation = harness.lines.findIndex((line) => line.includes("one directory"));
+  const stop = harness.lines.findIndex((line) => line.includes("Press Ctrl+C"));
+  const dashboard = harness.calls.find((call) => call.args[0] === "dashboard");
+  assert.equal(explanation > -1 && stop > explanation, true);
+  assert.deepEqual(dashboard.args, ["dashboard", "--state-directory", "/tmp/agentbuildkit-state"]);
+  assert.equal(dashboard.stdio, "inherit");
+  assert.equal(harness.calls.some((call) => call.args[0] === "demo"), false);
+  assert.equal(harness.lines.includes("Dashboard stopped."), true);
 });
 
 test("logs do not include secret environment values", async () => {
@@ -346,7 +403,10 @@ function createHarness(overrides = {}) {
         cwd: repository,
         scriptDir: repository,
         noDemo: overrides.noDemo === true,
+        noDashboard: overrides.noDashboard === true,
+        stateDirectory: overrides.stateDirectory || "",
         upgrade: false,
+        source: overrides.source || "local",
         installMissingUv: overrides.installMissingUv === true,
         interactive: overrides.interactive === true,
         readFile: () => 'name = "agentbuildkit"\n',

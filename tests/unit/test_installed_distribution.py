@@ -154,8 +154,22 @@ _CANCEL = textwrap.dedent(
 
 @pytest.fixture(scope="module")
 def wheels(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build both distributions once. The checkout is not installed by this step."""
+    """Build both distributions once, or reuse AGENTBUILDKIT_ARTIFACTS."""
     out = tmp_path_factory.mktemp("wheels")
+    prebuilt = os.environ.get("AGENTBUILDKIT_ARTIFACTS", "").strip()
+    if prebuilt:
+        source = Path(prebuilt)
+        copied = [
+            path.name
+            for path in sorted(source.iterdir())
+            if path.is_file() and path.name.endswith((".whl", ".tar.gz"))
+        ]
+        if len(copied) < 4:
+            raise AssertionError(f"expected four Python artifacts, found {copied}")
+        for name in copied:
+            target = out / name
+            target.write_bytes((source / name).read_bytes())
+        return out
     completed = subprocess.run(
         ["uv", "build", "--all-packages", "--out-dir", str(out)],
         cwd=_ROOT,
@@ -226,7 +240,7 @@ def test_harness_without_templates_reports_the_missing_package(
     version = _run(agentkit, ["version"], env, work)
     _assert_installed_locally(agentkit, env, work, templates=False)
     assert version.returncode == 0
-    assert "AgentBuildKit 0.1.0" in version.stdout
+    assert "AgentBuildKit 0.2.0" in version.stdout
     doctor = _run(agentkit, ["doctor"], env, work)
     assert doctor.returncode == 0
     assert "not installed" in doctor.stdout
@@ -265,7 +279,7 @@ def test_one_install_selects_the_local_wheels(wheels: Path, tmp_path: Path) -> N
     assert "not installed" not in templates_line
     assert "installed" in templates_line
     version = _run(agentkit, ["version"], env, work)
-    assert "AgentBuildKit 0.1.0" in version.stdout
+    assert "AgentBuildKit 0.2.0" in version.stdout
 
 
 _PUBLISHED_HARNESS = (
@@ -276,19 +290,37 @@ _PUBLISHED_HARNESS = (
 
 
 def test_published_harness_0_1_0_is_rejected(wheels: Path, tmp_path: Path) -> None:
-    """The published 0.1.0 artifact is not a compatible harness for these templates."""
+    """The published 0.1.0 artifact does not satisfy the 0.2.0 templates."""
     path = tmp_path / "venv"
     subprocess.run(["uv", "venv", str(path), "--python", "3.12"], check=True, cwd=tmp_path)
     python = path / "bin" / "python"
     templates = next(wheels.glob("agentbuildkit_templates-*.whl"))
-    installed = subprocess.run(
+    refused = subprocess.run(
         ["uv", "pip", "install", "--python", str(python), _PUBLISHED_HARNESS, str(templates)],
-        cwd=path,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert refused.returncode != 0
+    assert "0.2.0" in refused.stderr
+
+    installed = subprocess.run(
+        ["uv", "pip", "install", "--python", str(python), _PUBLISHED_HARNESS],
+        cwd=tmp_path,
         capture_output=True,
         text=True,
         check=False,
     )
     assert installed.returncode == 0, installed.stderr[-4000:]
+    forced = subprocess.run(
+        ["uv", "pip", "install", "--python", str(python), "--no-deps", str(templates)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert forced.returncode == 0, forced.stderr[-4000:]
     env = _env()
     work = tmp_path / "work"
     work.mkdir()
@@ -324,9 +356,54 @@ def test_published_harness_0_1_0_is_rejected(wheels: Path, tmp_path: Path) -> No
     assert "agentbuildkit.teams.load_bundle_json" in message
     assert "agentbuildkit.drafting.build_server" in message
     assert "published agentbuildkit 0.1.0" in message
-    assert "first harness release" in message
-    assert "no public install command yet" in message
+    assert "agentbuildkit>=0.2.0,<0.3.0" in message
     assert "Traceback" not in completed.stderr
+    assert list(work.iterdir()) == []
+
+
+def test_upgrade_from_the_published_harness_selects_the_local_pair(
+    wheels: Path,
+    tmp_path: Path,
+) -> None:
+    """A real 0.1.0 install is replaced by the local 0.2.0 pair."""
+    path = tmp_path / "venv"
+    subprocess.run(["uv", "venv", str(path), "--python", "3.12"], check=True, cwd=tmp_path)
+    python = path / "bin" / "python"
+    agentkit = path / "bin" / "agentkit"
+    installed = subprocess.run(
+        ["uv", "pip", "install", "--python", str(python), _PUBLISHED_HARNESS],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert installed.returncode == 0, installed.stderr[-4000:]
+    env = _env()
+    work = tmp_path / "work"
+    work.mkdir()
+    before = _run(agentkit, ["version"], env, work)
+    assert "0.1.0" in before.stdout
+    harness = next(
+        item for item in wheels.glob("agentbuildkit-*.whl") if "templates" not in item.name
+    )
+    templates = next(wheels.glob("agentbuildkit_templates-*.whl"))
+    upgraded = subprocess.run(
+        ["uv", "pip", "install", "--python", str(python), str(harness), str(templates)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert upgraded.returncode == 0, upgraded.stderr[-4000:]
+    after = _run(agentkit, ["version"], env, work)
+    assert "AgentBuildKit 0.2.0" in after.stdout
+    doctor = _run(agentkit, ["doctor"], env, work)
+    assert doctor.returncode == 0, doctor.stderr
+    templates_line = next(
+        line for line in doctor.stdout.splitlines() if line.startswith("Templates")
+    )
+    assert "not installed" not in templates_line
+    assert "installed" in templates_line
     assert list(work.iterdir()) == []
 
 
@@ -521,12 +598,12 @@ def _assert_installed_locally(
     assert "site-packages" in lines[0]
     assert str(_ROOT / "src") not in lines[0]
     assert lines[1] == "agentbuildkit_templates"
-    assert lines[2] == "bound=''"
+    assert lines[2] == "bound='agentbuildkit>=0.2.0,<0.3.0'"
     assert lines[3:6] == ["office False", "customer_service False", "operations_reporting False"]
     if templates:
         assert "site-packages" in lines[6]
         assert str(_ROOT) not in lines[6]
-        assert lines[7] == "templates-bound=''"
+        assert lines[7] == "templates-bound='agentbuildkit>=0.2.0,<0.3.0'"
 
 
 def _env() -> dict[str, str]:

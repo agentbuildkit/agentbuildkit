@@ -23,7 +23,7 @@ MODULES = [
 
 
 def test_version_is_set() -> None:
-    assert agentbuildkit.__version__ == "0.1.0"
+    assert agentbuildkit.__version__ == "0.2.0"
 
 
 def test_submodules_import() -> None:

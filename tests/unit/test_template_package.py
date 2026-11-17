@@ -156,5 +156,5 @@ def test_missing_capability_names_the_release_requirement(monkeypatch: pytest.Mo
     message = str(caught.value)
     assert "agentbuildkit.revisions.RevisionService" in message
     assert "published agentbuildkit 0.1.0" in message
-    assert "first harness release" in message
-    assert compat.HARNESS_RELEASE_BOUND == ""
+    assert "agentbuildkit>=0.2.0,<0.3.0" in message
+    assert compat.HARNESS_RELEASE_BOUND == "agentbuildkit>=0.2.0,<0.3.0"

@@ -1,15 +1,12 @@
 [project]
 name = "agentbuildkit-templates"
-version = "0.1.0"
+version = "0.2.0"
 description = "First-party Customer Service and Operations Reporting templates for AgentBuildKit."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-# Release preparation: this name does not mean the published 0.1.0 harness is
-# compatible. Before publishing, require at least the first harness release
-# that provides the capabilities in agentbuildkit_templates.compat.
-dependencies = ["agentbuildkit"]
+dependencies = ["agentbuildkit>=0.2.0,<0.3.0"]
 
 [tool.uv.sources]
 agentbuildkit = { workspace = true }

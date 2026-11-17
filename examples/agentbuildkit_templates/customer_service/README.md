@@ -43,7 +43,7 @@ The same team can be opened in a local dashboard beside Operations Reporting. Th
 PYTHONPATH=examples uv run python -m customer_service.dashboard
 ```
 
-That module command is the checkout wrapper. After `agentbuildkit-templates` is installed from a local wheel, the same dashboard is `agentkit dashboard`. See [Install](../../docs/install.md). The published 0.1.0 package does not include it.
+That module command is the checkout wrapper. After `agentbuildkit-templates` is installed from a local wheel, the same dashboard is `agentkit dashboard`. See [Install](../../docs/install.md). The published 0.1.0 package does not include it. The upcoming 0.2.0 install is documented there and is not published yet.
 
 `APP_STATE_DIRECTORY` in `.env` overrides the same variable in the shell. `--state-directory` selects the directory for one process and leaves `.env` unchanged. Provider settings still come from `.env` and the process environment. A check with a fake `.env` pointed at a sentinel directory wrote the workflow, revision, recovery, and connection databases, and a revision migration backup, only in the directory named by the flag. The sentinel was unchanged. A shell assignment alone was not shown to select a temporary directory when `.env` already sets `APP_STATE_DIRECTORY`. Earlier preview processes started that way do not have an established storage location.
 

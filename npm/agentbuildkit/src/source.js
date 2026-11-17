@@ -6,6 +6,8 @@ const path = require("node:path");
 const { BootstrapError } = require("./errors");
 
 const PACKAGE_NAME = "agentbuildkit";
+const HARNESS_SPEC = "agentbuildkit>=0.2.0,<0.3.0";
+const TEMPLATES_SPEC = "agentbuildkit-templates>=0.2.0,<0.3.0";
 
 function installArguments(source, { upgrade = false } = {}) {
   const args = ["tool", "install", "--python", "3.12", "--managed-python"];
@@ -16,9 +18,20 @@ function installArguments(source, { upgrade = false } = {}) {
     args.push("--with", path.join(source.path, "examples"));
     args.push(source.path);
   } else {
-    args.push(PACKAGE_NAME);
+    args.push("--with", TEMPLATES_SPEC);
+    args.push(HARNESS_SPEC);
   }
   return args;
+}
+
+function templatesReady(doctorOutput) {
+  const line = String(doctorOutput)
+    .split("\n")
+    .find((item) => item.trimStart().startsWith("Templates"));
+  if (!line || line.includes("not installed")) {
+    return false;
+  }
+  return line.includes("installed");
 }
 
 function toolIsInstalled(listOutput, name = PACKAGE_NAME) {
@@ -78,9 +91,12 @@ function walkForRepository(start, { readFile, exists }) {
 }
 
 module.exports = {
+  HARNESS_SPEC,
   PACKAGE_NAME,
+  TEMPLATES_SPEC,
   findRepository,
   installArguments,
   resolveSource,
+  templatesReady,
   toolIsInstalled,
 };

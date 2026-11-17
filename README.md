@@ -22,13 +22,15 @@ It currently builds on Microsoft Agent Framework. Each agent declares its own pr
 
 ## Quick start
 
-### Public install
+### Upcoming 0.2.0 install
+
+These commands are not on the public index yet. Today's `npx agentbuildkit` is npm 0.0.2 and installs the harness only.
 
 ```bash
-npx agentbuildkit
+npx agentbuildkit@0.0.3
 ```
 
-The command installs the Python CLI with [uv](https://docs.astral.sh/uv/) and then runs `agentkit doctor`. In an interactive terminal it offers the offline demo.
+The upcoming bootstrapper installs `agentbuildkit>=0.2.0,<0.3.0` and `agentbuildkit-templates>=0.2.0,<0.3.0`, runs `agentkit doctor`, explains the state directory, and can open the local dashboard. Press Ctrl+C to stop the dashboard. It does not call a model. See [Install](docs/install.md).
 
 ### Development install
 
@@ -113,7 +115,7 @@ Skills and persistent agent memory are not in this release. The harness loads de
 
 `examples/agentbuildkit_templates/customer_service` is a separate example with fixture data. It is not the offline demo. It is packaged as `agentbuildkit-templates`, not copied into the harness. See [Install](docs/install.md).
 
-A local install of that templates package serves drafts over stdio MCP and starts the dashboard. `agentkit mcp serve` requires an absolute `--state-directory` and does not read `APP_STATE_DIRECTORY`. `agentkit dashboard --state-directory` selects one process directory and overrides `.env`. Without that flag, a `.env` file in the current directory wins over the shell. The startup lock is POSIX `flock`. The published `agentbuildkit` 0.1.0 package and the published `npx agentbuildkit` package do not include the templates. See [MCP](docs/mcp.md).
+A local install of that templates package serves drafts over stdio MCP and starts the dashboard. `agentkit mcp serve` requires an absolute `--state-directory` and does not read `APP_STATE_DIRECTORY`. `agentkit dashboard --state-directory` selects one process directory and overrides `.env`. Without that flag, a `.env` file in the current directory wins over the shell. The startup lock is POSIX `flock`. The published `agentbuildkit` 0.1.0 package and the published `npx agentbuildkit` 0.0.2 package do not include the templates. The upcoming 0.2.0 commands are in [Install](docs/install.md) and are not published yet. See [MCP](docs/mcp.md).
 
 Further detail is in [docs/architecture.md](docs/architecture.md).
 

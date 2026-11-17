@@ -1,11 +1,9 @@
 """Reject a harness that does not provide the capabilities these templates call.
 
-The published ``agentbuildkit`` 0.1.0 package uses the same version string as a
-locally built harness and does not provide these capabilities. A version
-specifier cannot tell those artifacts apart. ``HARNESS_RELEASE_BOUND`` stays
-empty until the first harness release that includes the capabilities is
-published. Set the templates dependency to that version before publishing
-``agentbuildkit-templates``.
+The published ``agentbuildkit`` 0.1.0 package does not provide these
+capabilities. ``HARNESS_RELEASE_BOUND`` is the templates dependency for the
+0.2.0 release. The check still runs so a forced install of an older harness
+fails before the templates import missing modules.
 """
 
 import importlib
@@ -19,9 +17,7 @@ REQUIRED_CAPABILITIES = (
     ("agentbuildkit.drafting", "build_server"),
 )
 
-# Release preparation: replace this empty bound with the first harness version
-# that provides REQUIRED_CAPABILITIES. Do not publish a dependency on 0.1.0.
-HARNESS_RELEASE_BOUND = ""
+HARNESS_RELEASE_BOUND = "agentbuildkit>=0.2.0,<0.3.0"
 
 
 class HarnessIncompatible(RuntimeError):
@@ -61,9 +57,8 @@ def _message(missing: tuple[str, ...]) -> str:
         "agentbuildkit-templates cannot use this harness. "
         f"The installed agentbuildkit package is {installed}. "
         f"These templates need {needed}. "
+        f"These templates require {HARNESS_RELEASE_BOUND}. "
         "The published agentbuildkit 0.1.0 package does not provide them. "
-        "Install the harness and the templates package built from the same revision. "
-        "Before agentbuildkit-templates is published, its dependency must require "
-        "at least the first harness release that includes those capabilities. "
-        "That version has not been released, so there is no public install command yet."
+        "Install the 0.2.0 harness and templates together. Until that release is "
+        "published, install the harness and templates built from the same revision."
     )
