@@ -329,6 +329,43 @@ def test_failed_creation_leaves_no_partial_instance(tmp_path: Path) -> None:
         reopened.close()
 
 
+def test_reopened_draft_stays_on_the_instance() -> None:
+    service = _service()
+    created, draft = service.create_instance(
+        _REPORTING,
+        "Facilities Operations",
+        "Plant jobs.",
+        "facilities-key",
+        team_id=_FACILITIES,
+    )
+    assert draft is not None
+    service.discard_draft(created.team_id, draft.draft_id)
+    reopened = service.create_draft(created.team_id)
+    assert reopened.team_id == created.team_id
+    assert reopened.template_id == _REPORTING
+    assert reopened.config.title == "Facilities Operations"
+    assert reopened.config.description == "Plant jobs."
+    assert service.drafts(_REPORTING) == ()
+
+    revision_id = _activate(service, created.team_id, reopened.draft_id)
+    service.discard_draft(created.team_id, reopened.draft_id)
+    edited = service.create_draft(created.team_id)
+    assert edited.team_id == created.team_id
+    assert edited.config.title == "Facilities Operations"
+    assert service.drafts(_REPORTING) == ()
+    assert service.active(created.team_id).revision_id == revision_id
+
+    service.discard_draft(created.team_id, edited.draft_id)
+    reset = service.reset_from_template(created.team_id)
+    assert reset.team_id == created.team_id
+    assert reset.template_id == _REPORTING
+    assert reset.config.title == service.template(created.team_id).title
+    assert service.drafts(_REPORTING) == ()
+    record = service.instance(created.team_id)
+    assert record is not None
+    assert record.title == "Facilities Operations"
+
+
 def test_repeat_after_discard_does_not_open_another_draft() -> None:
     service = _service()
     created, draft = service.create_instance(

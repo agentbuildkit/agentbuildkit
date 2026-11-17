@@ -242,14 +242,22 @@ class RevisionService:
         return to_bundle(self.template(revision.team_id), revision.config, revision.team_id)
 
     def create_draft(self, team_id: str) -> Draft:
-        """Copy the active revision. An open draft is returned unchanged."""
+        """Copy the active revision. An open draft is returned unchanged.
+
+        A team with no revision reopens from its stored name and description.
+        The draft belongs to that team, not to the template's shipped team.
+        """
         template = self.template(team_id)
         existing = self._store.draft_for_team(team_id)
         if existing is not None:
             return existing
         if self._store.active_id(team_id) is None:
-            return self._open_draft(template, config_from_template(template))
-        return self._open_draft(template, self.active(team_id).config)
+            record = self.instance(team_id)
+            if record is None:
+                raise RevisionError("forbidden", "That team is not installed.")
+            config = _named_config(template, record.title, record.description)
+            return self._open_draft(template, team_id, config)
+        return self._open_draft(template, team_id, self.active(team_id).config)
 
     def reset_from_template(self, team_id: str, expected_version: int | None = None) -> Draft:
         """Replace the open draft with the shipped template, or open that draft.
@@ -261,7 +269,7 @@ class RevisionService:
         config = config_from_template(template)
         existing = self._store.draft_for_team(team_id)
         if existing is None:
-            return self._open_draft(template, config)
+            return self._open_draft(template, team_id, config)
         if existing.version != expected_version:
             raise RevisionError(
                 "stale",
@@ -642,10 +650,10 @@ class RevisionService:
             return self.baseline(team_id)
         return found
 
-    def _open_draft(self, template: TeamTemplate, config: TeamConfig) -> Draft:
+    def _open_draft(self, template: TeamTemplate, team_id: str, config: TeamConfig) -> Draft:
         draft = Draft(
             draft_id=uuid.uuid4().hex,
-            team_id=template.team_id,
+            team_id=team_id,
             template_id=template.template_id,
             version=1,
             config=config,
