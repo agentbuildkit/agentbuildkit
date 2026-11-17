@@ -11,16 +11,24 @@ from agent_framework import ChatResponse, Content, Message
 from agentbuildkit.teams import TeamRegistry, load_bundle
 from agentbuildkit.testing import ScriptedChatClient
 from agentbuildkit.workflows.persistence import PendingRequest
-from customer_service.connections import LEGACY_TEAM_ID, SqliteConnectionStore
-from customer_service.dashboard import handle_request
-from customer_service.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
-from customer_service.recovery import SqliteActionRecovery
-from customer_service.sheets import SheetDesk
-from office.installation import Installation, build_installation
-from office.server import serve_installation
-from operations_reporting.jobs import DEMO_AS_OF, FIXTURE, classify, parse_as_of
-from operations_reporting.service import CONNECTED_FAILURE
-from operations_reporting.team import TEAM_ID
+from agentbuildkit_templates.customer_service.connections import (
+    LEGACY_TEAM_ID,
+    SqliteConnectionStore,
+)
+from agentbuildkit_templates.customer_service.dashboard import handle_request
+from agentbuildkit_templates.customer_service.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
+from agentbuildkit_templates.customer_service.recovery import SqliteActionRecovery
+from agentbuildkit_templates.customer_service.sheets import SheetDesk
+from agentbuildkit_templates.office.installation import Installation, build_installation
+from agentbuildkit_templates.office.server import serve_installation
+from agentbuildkit_templates.operations_reporting.jobs import (
+    DEMO_AS_OF,
+    FIXTURE,
+    classify,
+    parse_as_of,
+)
+from agentbuildkit_templates.operations_reporting.service import CONNECTED_FAILURE
+from agentbuildkit_templates.operations_reporting.team import TEAM_ID
 
 _SHEET = "1" * 40
 _OTHER = "2" * 40
@@ -131,12 +139,14 @@ def _installation(tmp_path: Path | None = None, *, summary: str = "J-100 is over
 
 
 def test_bundle_id_is_independent_of_the_display_title() -> None:
-    bundle = load_bundle(Path("examples/customer_service/team.json"))
+    bundle = load_bundle(Path("examples/agentbuildkit_templates/customer_service/team.json"))
     assert bundle.team_id == "customer-service"
     assert bundle.display_name == "Customer Service"
     registry = TeamRegistry()
     registry.add(bundle)
-    registry.add(load_bundle(Path("examples/operations_reporting/team.json")))
+    registry.add(
+        load_bundle(Path("examples/agentbuildkit_templates/operations_reporting/team.json"))
+    )
     assert [item.team_id for item in registry.teams()] == [
         "customer-service",
         "operations-reporting",
@@ -181,7 +191,7 @@ async def test_connected_failure_does_not_return_demo_jobs() -> None:
     installation, gateway = _installation()
     try:
         connection = "local-connection"
-        from customer_service.connections import StoredConnection
+        from agentbuildkit_templates.customer_service.connections import StoredConnection
 
         installation.connections.save_connection(
             StoredConnection(
@@ -215,7 +225,7 @@ def test_same_agent_name_does_not_inherit_the_other_window() -> None:
         from typing import cast
 
         from agentbuildkit.integrations.composio import ComposioGateway, ComposioRejected
-        from customer_service.connections import StoredConnection
+        from agentbuildkit_templates.customer_service.connections import StoredConnection
 
         shared = cast(ComposioGateway, gateway)
         installation.connections.save_connection(
@@ -254,7 +264,7 @@ def test_unassign_keeps_the_other_team_and_disconnect_clears_both() -> None:
     try:
         from urllib.parse import urlencode
 
-        from customer_service.connections import StoredConnection
+        from agentbuildkit_templates.customer_service.connections import StoredConnection
 
         installation.connections.save_connection(
             StoredConnection(
@@ -374,7 +384,10 @@ async def test_switching_teams_during_submit_keeps_the_original_owner(
             installation.customer.team_id = TEAM_ID
             return await handle_request(*args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr("customer_service.dashboard.handle_request", flipped)
+        monkeypatch.setattr(
+            "agentbuildkit_templates.customer_service.dashboard.handle_request",
+            flipped,
+        )
         outcome = await installation.customer.submit("A-100", "Please explain the latest invoice.")
         assert installation.recovery.outcomes("customer-service")[-1].correlation_id == (
             outcome.correlation_id

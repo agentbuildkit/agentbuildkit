@@ -109,7 +109,12 @@ class TeamBundle(BundleModel):
 
 def load_bundle(path: str | Path) -> TeamBundle:
     """Read JSON data only. Validation errors can contain input; do not log them."""
-    return TeamBundle.model_validate_json(Path(path).read_bytes())
+    return load_bundle_json(Path(path).read_bytes())
+
+
+def load_bundle_json(data: bytes) -> TeamBundle:
+    """Read JSON bytes from a caller. The caller chooses the file or package resource."""
+    return TeamBundle.model_validate_json(data)
 
 
 class RegisteredTeam(BundleModel):

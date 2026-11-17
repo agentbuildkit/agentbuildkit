@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from importlib.resources import files
 from typing import cast
 
 from agent_framework import FunctionTool, SupportsChatGetResponse
@@ -10,9 +10,13 @@ from pydantic import BaseModel
 
 from agentbuildkit.agents import PlatformAgent, create_agent
 from agentbuildkit.observability import AuditLog
-from agentbuildkit.teams import TeamBundle, load_bundle
+from agentbuildkit.teams import TeamBundle, load_bundle_json
 from agentbuildkit.workflows.diagram import DiagramStep, WorkflowDiagram
-from operations_reporting.models import JobsRequest, ReportDraft, ReviewedReport
+from agentbuildkit_templates.operations_reporting.models import (
+    JobsRequest,
+    ReportDraft,
+    ReviewedReport,
+)
 
 TEAM_ID = "operations-reporting"
 WORKFLOW_NAME = "overdue-report"
@@ -31,7 +35,7 @@ REPORTING_DIAGRAM = WorkflowDiagram(
         "edit a sheet.",
     ),
 )
-BUNDLE_PATH = Path(__file__).with_name("team.json")
+BUNDLE_PATH = files("agentbuildkit_templates.operations_reporting").joinpath("team.json")
 _SCHEMAS: dict[str, type[BaseModel]] = {
     "JobsRequest": JobsRequest,
     "ReportDraft": ReportDraft,
@@ -41,7 +45,7 @@ _SCHEMAS: dict[str, type[BaseModel]] = {
 
 def reporting_bundle() -> TeamBundle:
     """Load the example bundle. Bindings are checked when the team is built."""
-    return load_bundle(BUNDLE_PATH)
+    return load_bundle_json(BUNDLE_PATH.read_bytes())
 
 
 @dataclass

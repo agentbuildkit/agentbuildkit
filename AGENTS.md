@@ -14,7 +14,7 @@ This repository is AgentBuildKit, a Python harness for reliable AI agents on Mic
 
 - Prefer deterministic Python where the step does not need model judgment. Use an agent for judgment, tool selection, or language generation.
 - Agent and workflow inputs and outputs use Pydantic models.
-- Reusable harness code belongs in `src/agentbuildkit`. The customer-service demonstration belongs in `examples/customer_service`. Do not add customer-service concepts to the harness.
+- Reusable harness code belongs in `src/agentbuildkit`. The customer-service demonstration belongs in `examples/agentbuildkit_templates/customer_service`. Do not add customer-service concepts to the harness.
 - New behaviour ships with a test that passes without a live model. Mark live-service tests with `@pytest.mark.integration`.
 
 ## Side effects, secrets, and audit

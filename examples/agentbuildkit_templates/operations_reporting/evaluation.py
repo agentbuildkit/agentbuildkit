@@ -17,11 +17,11 @@ from agentbuildkit.observability import AuditLog
 from agentbuildkit.teams import TeamBundle
 from agentbuildkit.testing import ScriptedChatClient
 from agentbuildkit.workflows import memory_workflow_store
-from customer_service.connections import MemoryConnectionStore
-from operations_reporting.models import JobsRequest
-from operations_reporting.service import handle_report
-from operations_reporting.sheets import JobWindow
-from operations_reporting.team import TEAM_ID, build_team
+from agentbuildkit_templates.customer_service.connections import MemoryConnectionStore
+from agentbuildkit_templates.operations_reporting.models import JobsRequest
+from agentbuildkit_templates.operations_reporting.service import handle_report
+from agentbuildkit_templates.operations_reporting.sheets import JobWindow
+from agentbuildkit_templates.operations_reporting.team import TEAM_ID, build_team
 
 _AS_OF = "2026-11-16"
 _REVISION_BUNDLE: ContextVar[TeamBundle | None] = ContextVar(

@@ -15,7 +15,7 @@ from agentbuildkit.providers import ProviderError
 from agentbuildkit.revisions import RevisionService, SqliteRevisionStore
 from agentbuildkit.testing import ScriptedChatClient
 from agentbuildkit.workflows import memory_workflow_store
-from customer_service.cli import (
+from agentbuildkit_templates.customer_service.cli import (
     approval_from_text,
     open_workflow_store,
     render_approval,
@@ -25,10 +25,14 @@ from customer_service.cli import (
     selected_state_directory,
     state_directory,
 )
-from customer_service.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
-from customer_service.models import CustomerRequest, FinalOutcome
-from customer_service.service import ServiceResult
-from customer_service.team import ORGANISATION_SCOPE, build_team, production_clients
+from agentbuildkit_templates.customer_service.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
+from agentbuildkit_templates.customer_service.models import CustomerRequest, FinalOutcome
+from agentbuildkit_templates.customer_service.service import ServiceResult
+from agentbuildkit_templates.customer_service.team import (
+    ORGANISATION_SCOPE,
+    build_team,
+    production_clients,
+)
 
 _OPENAI_KEYS = (
     "OPENAI_API_KEY",
@@ -236,7 +240,7 @@ def test_dashboard_argument_ignores_the_env_file_in_a_fresh_process(tmp_path: Pa
         [
             sys.executable,
             "-c",
-            "from office.server import dashboard_state_directory\n"
+            "from agentbuildkit_templates.office.server import dashboard_state_directory\n"
             "import sys\n"
             "print(dashboard_state_directory(sys.argv[1:]))",
             "--state-directory",
@@ -254,7 +258,7 @@ def test_dashboard_argument_ignores_the_env_file_in_a_fresh_process(tmp_path: Pa
         [
             sys.executable,
             "-c",
-            "from office.server import dashboard_state_directory\n"
+            "from agentbuildkit_templates.office.server import dashboard_state_directory\n"
             "print(dashboard_state_directory([]))",
         ],
         cwd=workspace,
@@ -296,8 +300,8 @@ def test_explicit_directory_receives_databases_and_migration_backups(
     (workspace / ".env").write_text(f"APP_STATE_DIRECTORY={sentinel}\n", encoding="utf-8")
     monkeypatch.chdir(workspace)
     monkeypatch.setenv("APP_STATE_DIRECTORY", str(shell))
-    from office.installation import build_installation
-    from office.templates import installed_templates
+    from agentbuildkit_templates.office.installation import build_installation
+    from agentbuildkit_templates.office.templates import installed_templates
 
     database = chosen / "revisions.sqlite"
     service = RevisionService(
@@ -349,14 +353,14 @@ def test_health_check_imports_without_an_api_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("APP_STATE_DIRECTORY", str(tmp_path))
-    from customer_service.health import check
+    from agentbuildkit_templates.customer_service.health import check
 
     assert check() == 0
 
 
 def test_health_check_rejects_a_missing_state_directory(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_STATE_DIRECTORY", "/missing/workflow-state")
-    from customer_service.health import check
+    from agentbuildkit_templates.customer_service.health import check
 
     assert check() == 1
 

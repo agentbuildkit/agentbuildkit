@@ -54,6 +54,9 @@ build-backend = "hatchling.build"
 package = true
 default-groups = ["dev"]
 
+[tool.uv.workspace]
+members = ["examples"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentbuildkit"]
 
@@ -76,7 +79,13 @@ src = ["src", "examples", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["agentbuildkit", "customer_service", "office", "operations_reporting"]
+known-first-party = [
+    "agentbuildkit",
+    "agentbuildkit_templates",
+    "customer_service",
+    "office",
+    "operations_reporting",
+]
 
 [tool.pyright]
 pythonVersion = "3.12"

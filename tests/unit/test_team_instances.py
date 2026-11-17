@@ -27,13 +27,13 @@ from agentbuildkit.revisions import (
 )
 from agentbuildkit.testing import ScriptedChatClient
 from agentbuildkit.workflows.diagram import DiagramStep
-from customer_service.connections import StoredConnection
-from customer_service.evaluation import scripted_clients
-from office.installation import Installation, build_installation
-from office.reporting import ReportingDashboard
-from office.server import serve_installation
-from office.templates import installed_evaluators, installed_templates
-from operations_reporting.jobs import DEMO_AS_OF
+from agentbuildkit_templates.customer_service.connections import StoredConnection
+from agentbuildkit_templates.customer_service.evaluation import scripted_clients
+from agentbuildkit_templates.office.installation import Installation, build_installation
+from agentbuildkit_templates.office.reporting import ReportingDashboard
+from agentbuildkit_templates.office.server import serve_installation
+from agentbuildkit_templates.office.templates import installed_evaluators, installed_templates
+from agentbuildkit_templates.operations_reporting.jobs import DEMO_AS_OF
 
 _CUSTOMER = "customer-service"
 _REPORTING = "operations-reporting"
@@ -1144,7 +1144,7 @@ def _preview_customer_clients() -> dict[str, ScriptedChatClient]:
 
 
 def _serve_preview(state_directory: str, port_file: str) -> None:
-    from office.server import dashboard_state_directory
+    from agentbuildkit_templates.office.server import dashboard_state_directory
 
     chosen = dashboard_state_directory(["--state-directory", state_directory])
     if chosen is None or Path(chosen).resolve() != Path(state_directory).resolve():

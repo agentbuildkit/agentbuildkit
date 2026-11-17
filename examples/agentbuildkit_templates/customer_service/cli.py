@@ -25,10 +25,19 @@ from agentbuildkit.workflows import (
     memory_workflow_store,
     sqlite_workflow_store,
 )
-from customer_service.evaluation import LOCAL_MOCK_TOKEN
-from customer_service.models import CustomerRequest, FinalOutcome
-from customer_service.service import ServiceResult, handle_request, resume_service_action
-from customer_service.team import ORGANISATION_SCOPE, Organisation, build_team, production_clients
+from agentbuildkit_templates.customer_service.evaluation import LOCAL_MOCK_TOKEN
+from agentbuildkit_templates.customer_service.models import CustomerRequest, FinalOutcome
+from agentbuildkit_templates.customer_service.service import (
+    ServiceResult,
+    handle_request,
+    resume_service_action,
+)
+from agentbuildkit_templates.customer_service.team import (
+    ORGANISATION_SCOPE,
+    Organisation,
+    build_team,
+    production_clients,
+)
 
 _WORKFLOW_DATABASE = "workflows.sqlite"
 

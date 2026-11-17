@@ -24,7 +24,17 @@ test("local and package install commands keep paths as single arguments", () => 
   ]);
   assert.deepEqual(
     installArguments({ kind: "local", path: repository }, { upgrade: true }),
-    ["tool", "install", "--python", "3.12", "--managed-python", "--force", repository],
+    [
+      "tool",
+      "install",
+      "--python",
+      "3.12",
+      "--managed-python",
+      "--force",
+      "--with",
+      path.join(repository, "examples"),
+      repository,
+    ],
   );
 });
 

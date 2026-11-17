@@ -17,8 +17,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol, cast
 
-from customer_service.connections import LEGACY_TEAM_ID
-from customer_service.models import FinalOutcome, OutcomeStatus
+from agentbuildkit_templates.customer_service.connections import LEGACY_TEAM_ID
+from agentbuildkit_templates.customer_service.models import FinalOutcome, OutcomeStatus
 
 _STATUSES: frozenset[str] = frozenset(
     {"completed", "rejected", "pending_approval", "escalated", "route_rejected"}

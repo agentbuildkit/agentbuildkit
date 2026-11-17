@@ -1,12 +1,12 @@
 # Architecture
 
-`src/agentbuildkit` is the AgentBuildKit harness. `examples/customer_service` is a demonstration team with fixture data, including reference `A-100`. Each agent declares a provider and a model. The provider registry builds the chat client. OpenAI and Anthropic are the built-in providers, and one team can mix them. Callers can still inject a chat client per agent. Offline tests use `ScriptedChatClient`.
+`src/agentbuildkit` is the AgentBuildKit harness. `examples/agentbuildkit_templates/customer_service` is a demonstration team with fixture data, including reference `A-100`. Each agent declares a provider and a model. The provider registry builds the chat client. OpenAI and Anthropic are the built-in providers, and one team can mix them. Callers can still inject a chat client per agent. Offline tests use `ScriptedChatClient`.
 
 Microsoft Agent Framework 1.x is the current runtime. Microsoft Foundry stays an optional extra.
 
 ```mermaid
 flowchart TB
-  caller[Caller or CLI] --> organisation[examples/customer_service]
+  caller[Caller or CLI] --> organisation[agentbuildkit_templates/customer_service]
   organisation --> schemas[Typed Pydantic models]
   organisation --> python[Deterministic Python]
   organisation --> agents[PlatformAgent boundary]
@@ -134,7 +134,7 @@ A startup failure, a lost response, a malformed payload, and a duplicate complet
 
 MCP servers come from `McpServerConfig`. The name, transport, command, URL, and credentials are configuration. A model cannot replace them or pass `url`, `command`, `headers`, or `authorization` as tool arguments. Each exposed remote tool has an explicit `ToolEffect`.
 
-The local drafting server is a separate stdio process. It calls `RevisionService` for the registered templates. It does not activate a revision, and draft text it returns is data rather than a change to its own tools. See [MCP](mcp.md).
+The local drafting server is a separate stdio process. It calls `RevisionService` for the two templates registered by the `office` package. It does not activate a revision, and draft text it returns is data rather than a change to its own tools. See [MCP](mcp.md) and [Install](install.md).
 
 ## Observability and correlation
 

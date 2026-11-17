@@ -8,7 +8,7 @@ from agent_framework.openai import OpenAIChatClient
 
 from agentbuildkit.observability import AuditLog
 from agentbuildkit.workflows import memory_workflow_store, sqlite_workflow_store
-from customer_service import (
+from agentbuildkit_templates.customer_service import (
     LOCAL_MOCK_TOKEN,
     ORGANISATION_SCOPE,
     CustomerRequest,
@@ -18,13 +18,13 @@ from customer_service import (
     resume_service_action,
     run_organisation_evaluation,
 )
-from customer_service.evaluation import (
+from agentbuildkit_templates.customer_service.evaluation import (
     RAW_MODEL_OUTPUT,
     execute_case,
     organisation_cases,
     scripted_clients,
 )
-from customer_service.team import SAM, TAYLOR
+from agentbuildkit_templates.customer_service.team import SAM, TAYLOR
 
 
 def _silent(**_kwargs: object) -> None:

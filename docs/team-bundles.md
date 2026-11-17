@@ -4,7 +4,7 @@ A JSON bundle describes agents independently of provider clients. Validate its
 structure without credentials or network access:
 
 ```sh
-agentkit team validate examples/customer_service/team.json
+agentkit team validate examples/agentbuildkit_templates/customer_service/team.json
 ```
 
 Each agent declares its name, purpose, instructions, provider, model, input and
@@ -77,11 +77,12 @@ templates, creates an inactive instance, edits the open draft with an expected
 version, validates it, and runs the scripted suite. It cannot activate,
 discard, or reset. Start it with an absolute `--state-directory`, then open
 that directory in the dashboard to activate. The command is documented in
-[MCP](mcp.md). It requires this checkout and POSIX file locking. It is not
-part of the published package or `npx agentbuildkit`.
+[MCP](mcp.md). It needs POSIX file locking. A locally built
+`agentbuildkit-templates` install provides it. The published 0.1.0 package
+and the published `npx agentbuildkit` package do not.
 
-The customer-service example loads `examples/customer_service/team.json` with
-`load_bundle` and resolves it through `definitions`. Typed models and prepared
+The customer-service example loads its packaged `team.json` and resolves it
+through `definitions`. Typed models and prepared
 tools stay in the application. `build_team` passes those definitions to
 `create_agent`. Routing, the approval workflow, SQLite persistence, audit, and
 evaluation stay on the existing service. The local dashboard calls that service.

@@ -13,6 +13,7 @@ function installArguments(source, { upgrade = false } = {}) {
     args.push("--force");
   }
   if (source.kind === "local") {
+    args.push("--with", path.join(source.path, "examples"));
     args.push(source.path);
   } else {
     args.push(PACKAGE_NAME);

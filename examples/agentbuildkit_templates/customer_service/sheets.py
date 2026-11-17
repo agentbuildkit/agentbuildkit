@@ -25,8 +25,8 @@ from agentbuildkit.integrations.composio import (
     auth_config_ready,
     run_allowlisted_read,
 )
-from customer_service.business import BusinessSystem
-from customer_service.connections import (
+from agentbuildkit_templates.customer_service.business import BusinessSystem
+from agentbuildkit_templates.customer_service.connections import (
     LEGACY_TEAM_ID,
     ConnectionStore,
     StoredAssignment,

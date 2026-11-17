@@ -27,9 +27,9 @@ from agentbuildkit.cli import run
 from agentbuildkit.evaluation import EvaluationReport
 from agentbuildkit.teams import TeamBundle
 from agentbuildkit.testing import ScriptedChatClient
-from customer_service.evaluation import scripted_clients
-from office.installation import build_installation
-from office.server import serve_installation
+from agentbuildkit_templates.customer_service.evaluation import scripted_clients
+from agentbuildkit_templates.office.installation import build_installation
+from agentbuildkit_templates.office.server import serve_installation
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SENTINEL = "sk-drafting-sentinel"
@@ -764,7 +764,7 @@ def main() -> None:
     args = parser.parse_args()
     from agentbuildkit.drafting import build_server, quiet_diagnostics, require_state_directory
     from agentbuildkit.revisions import RevisionService, SqliteRevisionStore
-    from office.templates import installed_templates
+    from agentbuildkit_templates.office.templates import installed_templates
 
     directory = require_state_directory(str(args.state_directory))
     service = RevisionService(

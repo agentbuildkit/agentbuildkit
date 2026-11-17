@@ -22,7 +22,7 @@ Model + Harness = Agent. Deterministic Python owns routing, tool permission and 
 
 - Install with `npx agentbuildkit` (installs the Python CLI with uv, then runs `agentkit doctor`) or `uv sync` from a clone. Python 3.12.
 - `agentkit demo` is offline: scripted model replies, no API key, no provider calls.
-- `examples/customer_service` is a separate four-agent example (Alex manager, Sam and Taylor specialists, Jordan reviewer) over fixture data. It has a local dashboard served by the Python standard library at `127.0.0.1:8765`.
+- `examples/agentbuildkit_templates/customer_service` is a separate four-agent example (Alex manager, Sam and Taylor specialists, Jordan reviewer) over fixture data. It has a local dashboard served by the Python standard library at `127.0.0.1:8765`.
 - A live run of the example needs `OPENAI_API_KEY`. `APP_STATE_DIRECTORY` makes pending approvals, outcomes and the audit ledger survive a restart; without it state is in memory only.
 - Team bundles are JSON (`team.json`) validated with `agentkit team validate`.
 
@@ -32,7 +32,7 @@ Model + Harness = Agent. Deterministic Python owns routing, tool permission and 
 - Side effects require an allowlisted tool and human approval before they run. Approval runs an action at most once; an interrupted reservation is marked unresolved and is not replayed. This is not exactly-once delivery to an external system.
 - SQLite pause and resume, idempotent side effects, and an audit ledger that records provider and model. The ledger stores argument hashes, never argument values or secrets.
 - Provider errors are shown as safe, classified messages; raw exception payloads and API keys are never displayed.
-- Reusable harness code lives in `src/agentbuildkit`; customer-service concepts stay in `examples/customer_service`.
+- Reusable harness code lives in `src/agentbuildkit`; customer-service concepts stay in `examples/agentbuildkit_templates/customer_service`.
 - Microsoft Agent Framework is the only agent framework. Foundry stays an optional extra. New dependencies or a frontend build system need explaining before they are introduced.
 - Dashboard data limits: outcomes have no timestamps; a pending approval does not store the customer's message or the specialist's draft; evaluation reports are not persisted.
 - Not in this release: skills and persistent agent memory.
@@ -49,7 +49,7 @@ Model + Harness = Agent. Deterministic Python owns routing, tool permission and 
 ## Evidence on Hand
 
 - Offline demo (`agentkit demo`) and the customer-service example with its dashboard.
-- 13 scripted evaluation scenarios in `examples/customer_service/evaluation.py`, plus the unit test suite under `tests/unit`.
+- 13 scripted evaluation scenarios in `examples/agentbuildkit_templates/customer_service/evaluation.py`, plus the unit test suite under `tests/unit`.
 - v0.1.0 on PyPI; the `agentbuildkit` bootstrapper on npm.
 - Fixture data only: reference A-100, account name Northwind, mock business API at `http://business.test`.
 - Absent, and must not be fabricated: customers, testimonials, case studies, benchmarks, production deployments, live CRM integrations, token costs or timings the backend does not record.

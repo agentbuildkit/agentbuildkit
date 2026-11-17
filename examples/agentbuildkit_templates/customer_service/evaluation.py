@@ -22,9 +22,17 @@ from agentbuildkit.observability import AuditLog
 from agentbuildkit.teams import TeamBundle
 from agentbuildkit.testing import ScriptedChatClient
 from agentbuildkit.workflows import memory_workflow_store, sqlite_workflow_store
-from customer_service.models import CustomerRequest, FinalOutcome, RouteDecision
-from customer_service.service import handle_request, resume_service_action
-from customer_service.team import ORGANISATION_SCOPE, Organisation, build_team
+from agentbuildkit_templates.customer_service.models import (
+    CustomerRequest,
+    FinalOutcome,
+    RouteDecision,
+)
+from agentbuildkit_templates.customer_service.service import handle_request, resume_service_action
+from agentbuildkit_templates.customer_service.team import (
+    ORGANISATION_SCOPE,
+    Organisation,
+    build_team,
+)
 
 LOCAL_MOCK_TOKEN = "local-mock-business-token"
 _REVISION_BUNDLE: ContextVar[TeamBundle | None] = ContextVar(

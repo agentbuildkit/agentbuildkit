@@ -16,7 +16,7 @@ from agent_framework import SecretString
 from agentbuildkit.guardrails import ApprovalDecision, ToolEffect, prepare_tool
 from agentbuildkit.integrations import HttpClient
 from agentbuildkit.observability import AuditLog, current_correlation_id
-from customer_service.models import (
+from agentbuildkit_templates.customer_service.models import (
     AccountView,
     ActionReceipt,
     ReferenceQuery,

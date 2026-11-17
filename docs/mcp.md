@@ -14,14 +14,25 @@ and the scripted result, and without a request form. Claude Desktop was not
 tested. A client that can only connect to a remote HTTP or OAuth server cannot
 use this milestone.
 
-The command is in this repository checkout. It needs POSIX file locking
-(`flock`) for the revision database. It is not in the published
-`agentbuildkit` 0.1.0 package and not in `npx agentbuildkit`. Installing the
-current package from PyPI does not add `agentkit mcp`.
+The server needs POSIX file locking (`flock`) for the revision database.
+Platforms without `fcntl` are refused. Windows has not been verified.
+
+Two ways to start it are covered below. A checkout command uses this
+repository. An installed command uses wheels built from this repository. The
+published `agentbuildkit` 0.1.0 package and the published `npx agentbuildkit`
+package do not include `agentkit mcp` or the templates. Installing the current
+package from PyPI does not add the command.
 
 ## Launch
 
-From the repository root, with an absolute directory you choose:
+From a locally built install, with an absolute directory you choose. This is
+not a PyPI or `npx` command until a later release:
+
+```bash
+agentkit mcp serve --state-directory /tmp/agentbuildkit-drafts
+```
+
+From the repository root, the same server still starts through the checkout:
 
 ```bash
 mkdir -p /tmp/agentbuildkit-drafts
@@ -43,10 +54,17 @@ credentials, instruction bodies, or customer records.
 
 ## Cursor or Claude Desktop
 
-Use an absolute interpreter and absolute paths. Replace the repository and
-state paths. Cursor loaded a configuration of this shape and listed the
-drafting tools. Claude Desktop was not tested. The paths below are
-placeholders.
+Cursor loaded two separate configurations. The checkout entry below discovered
+the drafting tools and completed an inactive Operations Reporting draft.
+A second entry, whose command is the installed `agentkit` and whose arguments
+are `mcp serve` plus an absolute state directory, was also discovered by
+Cursor. That process created, edited, validated, and evaluated another
+inactive Operations Reporting draft. The dashboard started from that same
+`agentkit` showed the draft and the scripted result, and the team stayed
+inactive. Claude Desktop was not tested. The paths below are placeholders.
+Do not set `PYTHONPATH` on the installed entry.
+
+Checkout configuration:
 
 ```json
 {
@@ -62,6 +80,30 @@ placeholders.
       "env": {
         "PYTHONPATH": "/ABSOLUTE/PATH/agent-framework-starter/src:/ABSOLUTE/PATH/agent-framework-starter/examples"
       }
+    }
+  }
+}
+```
+
+`python -m office.mcp` is a checkout wrapper. It is not installed. The
+installed Cursor entry used for verification pointed at a temporary virtual
+environment and a temporary state directory. Those `/tmp` paths are not a
+permanent installation.
+
+Installed configuration. Use the absolute `agentkit` from the environment
+where `agentbuildkit-templates` is installed:
+
+```json
+{
+  "mcpServers": {
+    "agentbuildkit-drafts-installed": {
+      "command": "/ABSOLUTE/PATH/agentkit",
+      "args": [
+        "mcp",
+        "serve",
+        "--state-directory",
+        "/ABSOLUTE/PATH/agentbuildkit-drafts"
+      ]
     }
   }
 }
@@ -83,7 +125,15 @@ original unchanged.
 
 ## Activate in the dashboard
 
-Point the dashboard at the same absolute directory:
+Point the dashboard at the same absolute directory.
+
+Installed command, after the templates package is installed:
+
+```bash
+agentkit dashboard --state-directory /tmp/agentbuildkit-drafts
+```
+
+Checkout command:
 
 ```bash
 PYTHONPATH=src:examples uv run python -m customer_service.dashboard --state-directory /tmp/agentbuildkit-drafts

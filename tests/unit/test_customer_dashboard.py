@@ -12,11 +12,15 @@ from agent_framework import SecretString
 from agentbuildkit.evaluation import EvaluationReport
 from agentbuildkit.observability import AuditLog
 from agentbuildkit.workflows import WorkflowRunError, memory_workflow_store, sqlite_workflow_store
-from customer_service.dashboard import DashboardBinding, DashboardService, serve
-from customer_service.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
-from customer_service.models import FinalOutcome
-from customer_service.recovery import SqliteActionRecovery
-from customer_service.team import ORGANISATION_SCOPE, build_team
+from agentbuildkit_templates.customer_service.dashboard import (
+    DashboardBinding,
+    DashboardService,
+    serve,
+)
+from agentbuildkit_templates.customer_service.evaluation import LOCAL_MOCK_TOKEN, scripted_clients
+from agentbuildkit_templates.customer_service.models import FinalOutcome
+from agentbuildkit_templates.customer_service.recovery import SqliteActionRecovery
+from agentbuildkit_templates.customer_service.team import ORGANISATION_SCOPE, build_team
 
 
 def _silent(**_kwargs: object) -> None:
@@ -301,7 +305,10 @@ async def test_interrupted_execution_is_not_replayed(
         del system, request
         raise RuntimeError("interrupted before the business call")
 
-    monkeypatch.setattr("customer_service.business._schedule", fail_before_action)
+    monkeypatch.setattr(
+        "agentbuildkit_templates.customer_service.business._schedule",
+        fail_before_action,
+    )
     failed = _durable("approved-service-action-executes-once", actions, workflow, recovery)
     try:
         with pytest.raises(WorkflowRunError):
@@ -486,7 +493,7 @@ def test_provider_errors_are_useful_without_exposing_payloads(
     import httpx2 as httpx
     from openai import AuthenticationError, BadRequestError, RateLimitError
 
-    from customer_service.dashboard import describe_error
+    from agentbuildkit_templates.customer_service.dashboard import describe_error
 
     response = httpx.Response(status, request=httpx.Request("POST", "https://example.test"))
     error_type = {401: AuthenticationError, 429: RateLimitError, 400: BadRequestError}[status]
@@ -500,7 +507,7 @@ def test_provider_errors_are_useful_without_exposing_payloads(
 
 
 def test_unknown_and_cyclic_errors_do_not_expose_details() -> None:
-    from customer_service.dashboard import describe_error
+    from agentbuildkit_templates.customer_service.dashboard import describe_error
 
     error = RuntimeError("private-data")
     error.__cause__ = error

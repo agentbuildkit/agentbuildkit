@@ -10,7 +10,15 @@ from agentbuildkit.revisions import (
     RevisionService,
     TeamTemplate,
 )
-from customer_service.dashboard_view import Page, Snapshot, e, layout, loc, not_found, status
+from agentbuildkit_templates.customer_service.dashboard_view import (
+    Page,
+    Snapshot,
+    e,
+    layout,
+    loc,
+    not_found,
+    status,
+)
 
 _NOTICES = {
     "stale": "This draft was saved somewhere else. Reload it before changing it.",

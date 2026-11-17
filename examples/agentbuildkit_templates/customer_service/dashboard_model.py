@@ -13,8 +13,8 @@ from typing import Literal
 
 from agentbuildkit.observability import AuditEvent
 from agentbuildkit.workflows import LedgerRecord, PendingRequest
-from customer_service.models import FinalOutcome
-from customer_service.service import (
+from agentbuildkit_templates.customer_service.models import FinalOutcome
+from agentbuildkit_templates.customer_service.service import (
     DECLINED_ACTION_RESPONSE,
     REVIEW_REJECTED_RESPONSE,
     UNSPECIFIED_ACTION_RESPONSE,

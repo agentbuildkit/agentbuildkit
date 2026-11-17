@@ -4,13 +4,13 @@ from agent_framework import SecretString
 
 from agentbuildkit.observability import AuditLog
 from agentbuildkit.workflows import memory_workflow_store
-from customer_service.evaluation import (
+from agentbuildkit_templates.customer_service.evaluation import (
     LOCAL_MOCK_TOKEN,
     scripted_clients,
 )
-from customer_service.models import CustomerRequest
-from customer_service.service import handle_request
-from customer_service.team import (
+from agentbuildkit_templates.customer_service.models import CustomerRequest
+from agentbuildkit_templates.customer_service.service import handle_request
+from agentbuildkit_templates.customer_service.team import (
     BUNDLE_PATH,
     ORGANISATION_SCOPE,
     build_team,

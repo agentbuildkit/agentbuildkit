@@ -14,10 +14,14 @@ from agentbuildkit.providers.anthropic import AnthropicCredentials
 from agentbuildkit.revisions import TeamTemplate
 from agentbuildkit.revisions.models import AgentContract
 from agentbuildkit.teams import TeamBundle
-from customer_service.evaluation import run_bundle_evaluation as evaluate_customer
-from customer_service.team import customer_team_bundle
-from operations_reporting.evaluation import run_bundle_evaluation as evaluate_reporting
-from operations_reporting.team import reporting_bundle
+from agentbuildkit_templates.customer_service.evaluation import (
+    run_bundle_evaluation as evaluate_customer,
+)
+from agentbuildkit_templates.customer_service.team import customer_team_bundle
+from agentbuildkit_templates.operations_reporting.evaluation import (
+    run_bundle_evaluation as evaluate_reporting,
+)
+from agentbuildkit_templates.operations_reporting.team import reporting_bundle
 
 Evaluator = Callable[[TeamBundle], Awaitable[EvaluationReport]]
 _FORBIDDEN = (

@@ -3,11 +3,11 @@
 import re
 
 from agentbuildkit.workflows.diagram import WorkflowDiagram, build_route
-from customer_service.dashboard_model import AuditItem, Run
-from customer_service.dashboard_view import Snapshot, render_page
-from customer_service.models import FinalOutcome, OutcomeStatus
-from customer_service.team import CUSTOMER_DIAGRAM
-from operations_reporting.team import REPORTING_DIAGRAM
+from agentbuildkit_templates.customer_service.dashboard_model import AuditItem, Run
+from agentbuildkit_templates.customer_service.dashboard_view import Snapshot, render_page
+from agentbuildkit_templates.customer_service.models import FinalOutcome, OutcomeStatus
+from agentbuildkit_templates.customer_service.team import CUSTOMER_DIAGRAM
+from agentbuildkit_templates.operations_reporting.team import REPORTING_DIAGRAM
 
 _OPS = "corr-ops"
 _CUSTOMER = "corr-customer"

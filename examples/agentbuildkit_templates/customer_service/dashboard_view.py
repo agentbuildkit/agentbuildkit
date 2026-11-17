@@ -20,7 +20,7 @@ from agentbuildkit.workflows.diagram import (
     build_route,
     link_on,
 )
-from customer_service.dashboard_model import (
+from agentbuildkit_templates.customer_service.dashboard_model import (
     STATES,
     AuditItem,
     Category,
@@ -1447,7 +1447,7 @@ def connections_page(snap: Snapshot, query: Mapping[str, str]) -> Page:
     elif snap.composio_package_missing:
         connect = (
             '<p class="sm muted">Connect stays off until the composio extra is installed '
-            'with <span class="mono">uv sync --extra composio</span>. The API key is '
+            '(<span class="mono">agentbuildkit[composio]</span>). The API key is '
             "already configured.</p>"
         )
     elif snap.composio_auth_missing:
