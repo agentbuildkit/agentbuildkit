@@ -25,6 +25,7 @@ def test_help_describes_agentbuildkit(capsys: pytest.CaptureFixture[str]) -> Non
     assert "AgentBuildKit" in output
     assert "demo" in output
     assert "doctor" in output
+    assert "mcp" in output
     assert "version" in output
     assert "customer-service" not in output
     assert "Northwind" not in output

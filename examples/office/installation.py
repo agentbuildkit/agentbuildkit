@@ -67,6 +67,21 @@ class Installation:
     def team(self, team_id: str) -> TeamService | None:
         return self.teams.get(team_id)
 
+    def team_for(self, team_id: str) -> TeamService | None:
+        """Return an installed team, opening one created by another process.
+
+        A team with no active revision stays inactive. This does not activate it.
+        """
+        found = self.teams.get(team_id)
+        if found is not None:
+            return found
+        try:
+            if self.revisions.instance(team_id) is None:
+                return None
+            return self.open_instance(team_id)
+        except RuntimeError:
+            return None
+
     def open_instance(self, team_id: str) -> TeamService:
         """Open one installed team. A second call returns the same service."""
         found = self.teams.get(team_id)

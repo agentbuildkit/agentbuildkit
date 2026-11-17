@@ -1,7 +1,7 @@
 """AgentBuildKit command line.
 
-``demo``, ``doctor``, ``version``, and ``team`` are the current commands. Add later
-commands as new subparsers without changing the ones that already exist.
+``demo``, ``doctor``, ``version``, ``team``, and ``mcp`` are the current commands.
+Add later commands as new subparsers without changing the ones that already exist.
 """
 
 import argparse
@@ -50,6 +50,8 @@ def run(argv: Sequence[str]) -> int:
         return 0
     if command == "demo":
         return _demo(approve=args.approve, reject=args.reject, verbose=args.verbose)
+    if command == "mcp":
+        return _mcp_serve(args.state_directory)
     print("Unknown command.", file=sys.stderr)
     return 2
 
@@ -102,7 +104,40 @@ def _parser() -> argparse.ArgumentParser:
         help="Reject the side effect without prompting.",
     )
     demo.add_argument("--verbose", action="store_true", help="Show an error traceback.")
+    mcp = commands.add_parser("mcp", help="Serve local team drafting over stdio.")
+    mcp_commands = mcp.add_subparsers(dest="mcp_command", required=True)
+    serve = mcp_commands.add_parser(
+        "serve",
+        help="Serve drafting tools on stdio. This does not read APP_STATE_DIRECTORY.",
+    )
+    serve.add_argument(
+        "--state-directory",
+        required=True,
+        help="Absolute directory for revisions.sqlite.",
+    )
     return parser
+
+
+def _mcp_serve(state_directory: object) -> int:
+    """Start the repository drafting server. The published package has no templates."""
+    if not isinstance(state_directory, str):
+        print("The state directory is not valid.", file=sys.stderr)
+        return 2
+    try:
+        from office.mcp import serve
+    except ImportError:
+        print(
+            "Team drafting is available from a repository checkout with src and "
+            "examples on PYTHONPATH. It is not part of the published package.",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        serve(state_directory)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    return 0
 
 
 def _demo(*, approve: bool, reject: bool, verbose: bool) -> int:

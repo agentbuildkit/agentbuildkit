@@ -181,6 +181,9 @@ def serve_installation(
                 self._redirect(self._connect(path))
                 return
             match = _TEAM_PATH.fullmatch(path)
+            if match is not None:
+                team_key = match.group("team")
+                on_owner(lambda team_id=team_key: installation.team_for(team_id))
             rest = (match.group("rest") if match else "") or "/"
             if _draft_rest(rest) and rest.endswith("/evaluate"):
                 location = _evaluate_draft(installation, path, fields, invoke, on_owner)
@@ -292,7 +295,7 @@ def _render(installation: Installation, path: str, query: dict[str, str]) -> Ren
     match = _TEAM_PATH.fullmatch(path)
     if match is None:
         return installation.customer.rendered_page("/404")
-    team = installation.team(match.group("team"))
+    team = installation.team_for(match.group("team"))
     if team is None:
         return installation.customer.rendered_page("/404")
     rest = match.group("rest") or "/"

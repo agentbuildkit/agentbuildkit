@@ -1,7 +1,7 @@
 """Shared draft, validation, activation, and rollback operations.
 
-The dashboard calls this service. A future MCP server can call it too. The
-service does not import example packages, connect accounts, or run tools.
+The dashboard and the local drafting server call this service. It does not
+import example packages, connect accounts, or run tools.
 """
 
 import re
@@ -66,35 +66,48 @@ class RevisionService:
         self._store.close()
 
     def seed(self) -> None:
-        """Register each shipped team once. Existing revisions and drafts are kept."""
-        for template in self.templates():
-            self._ensure_shipped(template)
+        """Register each shipped team once. Existing revisions and drafts are kept.
+
+        A file store holds its process lock for the whole registration, so a
+        second process waits and then sees the rows the first one committed.
+        """
+        with self._store.exclusive():
+            for template in self.templates():
+                self._ensure_shipped(template)
 
     def _ensure_shipped(self, template: TeamTemplate) -> None:
         team_id = template.team_id
         if self._store.instance(team_id) is None:
-            self._store.add_instance(
-                TeamInstance(
-                    team_id=team_id,
-                    template_id=template.template_id,
-                    title=template.title,
-                    description=template.description,
-                    idempotency_key=f"shipped:{template.template_id}",
-                    created_at=_now(),
+            try:
+                self._store.add_instance(
+                    TeamInstance(
+                        team_id=team_id,
+                        template_id=template.template_id,
+                        title=template.title,
+                        description=template.description,
+                        idempotency_key=f"shipped:{template.template_id}",
+                        created_at=_now(),
+                    )
                 )
-            )
+            except (sqlite3.IntegrityError, ValueError):
+                if self._store.instance(team_id) is None:
+                    raise
         if self._store.revisions(team_id):
             return
-        self._publish(
-            template,
-            config_from_template(template),
-            team_id=team_id,
-            suite_version="shipped",
-            evaluation_passed=True,
-            evaluation_note="Shipped template. Not an operator evaluation.",
-            kind="baseline",
-            previous="",
-        )
+        try:
+            self._publish(
+                template,
+                config_from_template(template),
+                team_id=team_id,
+                suite_version="shipped",
+                evaluation_passed=True,
+                evaluation_note="Shipped template. Not an operator evaluation.",
+                kind="baseline",
+                previous="",
+            )
+        except (sqlite3.IntegrityError, ValueError):
+            if not self._store.revisions(team_id):
+                raise
 
     def templates(self) -> tuple[TeamTemplate, ...]:
         return tuple(self._templates[key] for key in sorted(self._templates))

@@ -113,6 +113,8 @@ Skills and persistent agent memory are not in this release. The harness loads de
 
 `examples/customer_service` is a separate example with fixture data. It is not the offline demo and it is not part of the installed package.
 
+A repository checkout can serve those drafts over local stdio MCP. The command is `agentkit mcp serve --state-directory /absolute/path`, with `src` and `examples` on `PYTHONPATH`. It requires this checkout and POSIX file locking. It is not in the published 0.1.0 package or `npx agentbuildkit`. The server does not read `APP_STATE_DIRECTORY` and does not activate a team. See [docs/mcp.md](docs/mcp.md).
+
 Further detail is in [docs/architecture.md](docs/architecture.md).
 
 ## Development checks

@@ -5,6 +5,7 @@ Opening a file with an unknown schema copies a backup and leaves that file
 unchanged. It does not delete or rebuild an existing database.
 """
 
+import fcntl
 import json
 import shutil
 import sqlite3
@@ -28,6 +29,7 @@ from agentbuildkit.revisions.validate import content_hash
 
 _SCHEMA = "2"
 _SUPPORTED = frozenset({"1", "2"})
+_CONNECT_TIMEOUT_SECONDS = 10.0
 
 
 class RevisionStore(Protocol):
@@ -79,6 +81,8 @@ class RevisionStore(Protocol):
 
     def add_instance(self, item: TeamInstance) -> None: ...
 
+    def exclusive(self) -> AbstractContextManager[None]: ...
+
 
 class MemoryRevisionStore:
     """Process-local revisions for tests and a dashboard without a state directory."""
@@ -91,6 +95,11 @@ class MemoryRevisionStore:
         self._activations: list[Activation] = []
         self._pins: list[RunPin] = []
         self._instances: dict[str, TeamInstance] = {}
+
+    @contextmanager
+    def exclusive(self) -> Generator[None]:
+        """Memory stores have one caller. The method exists for the file store."""
+        yield
 
     @contextmanager
     def transaction(self) -> Generator[None]:
@@ -216,10 +225,22 @@ class SqliteRevisionStore:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._path = path
-        self._connection = sqlite3.connect(path)
-        self._connection.row_factory = sqlite3.Row
         self._in_transaction = False
-        self._prepare()
+        with self.exclusive():
+            self._connection = sqlite3.connect(path, timeout=_CONNECT_TIMEOUT_SECONDS)
+            self._connection.row_factory = sqlite3.Row
+            self._prepare()
+
+    @contextmanager
+    def exclusive(self) -> Generator[None]:
+        """Serialize migration and shipped-team registration across processes."""
+        lock_path = self._path.with_name(f"{self._path.name}.init.lock")
+        with lock_path.open("a") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     @contextmanager
     def transaction(self) -> Generator[None]:
@@ -527,7 +548,7 @@ class SqliteRevisionStore:
         if version == "1":
             self._connection.close()
             _backup(self._path)
-            self._connection = sqlite3.connect(self._path)
+            self._connection = sqlite3.connect(self._path, timeout=_CONNECT_TIMEOUT_SECONDS)
             self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.executescript(
