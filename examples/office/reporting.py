@@ -11,7 +11,9 @@ from typing import Any
 from agentbuildkit.applications import RenderedPage
 from agentbuildkit.evaluation import EvaluationReport
 from agentbuildkit.observability import AuditEvent
+from agentbuildkit.revisions import Revision, RevisionService
 from agentbuildkit.state.models import RegistryRejected, require_argument_hash
+from agentbuildkit.teams import TeamBundle
 from agentbuildkit.workflows import WorkflowStateStore
 from customer_service.dashboard_model import build_runs, merge_audit
 from customer_service.dashboard_view import (
@@ -21,6 +23,7 @@ from customer_service.dashboard_view import (
     Snapshot,
     render_page,
 )
+from customer_service.draft_pages import maybe_revision_page
 from customer_service.models import FinalOutcome
 from customer_service.recovery import ActionRecovery, MemoryActionRecovery
 from operations_reporting.jobs import parse_as_of
@@ -29,6 +32,7 @@ from operations_reporting.sheets import ANALYST, JobWindow
 from operations_reporting.team import REPORTING_DIAGRAM, TEAM_ID, ReportingTeam, reporting_bundle
 
 Evaluate = Callable[[], Coroutine[Any, Any, EvaluationReport]]
+TeamFactory = Callable[[TeamBundle], ReportingTeam]
 
 
 class ReportingDashboard:
@@ -42,6 +46,8 @@ class ReportingDashboard:
         recovery: ActionRecovery,
         *,
         evaluate: Evaluate | None = None,
+        revisions: RevisionService | None = None,
+        team_factory: TeamFactory | None = None,
     ) -> None:
         if store.scope != TEAM_ID:
             raise RuntimeError("The operations store does not match the team.")
@@ -53,6 +59,10 @@ class ReportingDashboard:
         self.recovery = recovery
         self.base = ""
         self.installed: tuple[tuple[str, str], ...] = ()
+        self.revisions = revisions
+        self._team_factory = team_factory
+        self.last_revision_id = ""
+        self.last_built_instructions = ""
         self.report: EvaluationReport | None = None
         self.error = ""
         self.draft: tuple[str, str] | None = None
@@ -64,10 +74,15 @@ class ReportingDashboard:
         """Draft one report. The team id is fixed before the model runs."""
         team_id = self.team_id
         parse_as_of(as_of)
+        revision = self.revisions.active(team_id) if self.revisions is not None else None
+        team = self._for_revision(revision)
+        correlation_id = uuid.uuid4().hex
+        if self.revisions is not None and revision is not None:
+            self.revisions.pin_run(team_id, correlation_id, "", revision.revision_id)
         outcome = await handle_report(
-            self.team,
+            team,
             _request(as_of, note),
-            correlation_id=uuid.uuid4().hex,
+            correlation_id=correlation_id,
             store=self.store,
             window=self.window,
         )
@@ -97,7 +112,22 @@ class ReportingDashboard:
         return False
 
     def page(self, path: str = "/", query: Mapping[str, str] | None = None) -> object:
-        return render_page(self.snapshot(), path, query)
+        params = query or {}
+        snap = self.snapshot()
+        rendered = maybe_revision_page(snap, self.revisions, path, params)
+        if rendered is not None:
+            return rendered
+        return render_page(snap, path, params)
+
+    def _for_revision(self, revision: Revision | None) -> ReportingTeam:
+        factory = self._team_factory
+        service = self.revisions
+        if revision is None or factory is None or service is None:
+            return self.team
+        self.last_revision_id = revision.revision_id
+        team = factory(service.bundle_for(revision))
+        self.last_built_instructions = team.analyst.definition.instructions
+        return team
 
     def render(self, path: str = "/", query: Mapping[str, str] | None = None) -> str:
         rendered = self.page(path, query)
@@ -113,14 +143,25 @@ class ReportingDashboard:
         )
 
     def snapshot(self) -> Snapshot:
-        bundle = reporting_bundle()
+        if self.revisions is None:
+            bundle = reporting_bundle()
+            title = bundle.display_name
+            installed = self.installed
+        else:
+            revision = self.revisions.active(self.team_id)
+            bundle = self.revisions.bundle_for(revision)
+            title = revision.config.title
+            installed = tuple(
+                (team_id, self.revisions.active(team_id).config.title)
+                for team_id, _title in self.installed
+            )
         mode = self.window.desk.store.data_mode(TEAM_ID, ANALYST)
         return Snapshot(
             team_name=bundle.team_id,
             team_id=self.team_id,
-            title=bundle.display_name,
+            title=title,
             base=self.base,
-            installed=self.installed,
+            installed=installed,
             approvals_enabled=False,
             summary=(
                 "Two agents draft and review an overdue-jobs report. "

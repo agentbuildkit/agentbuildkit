@@ -1,6 +1,7 @@
 """Offline evaluation for the overdue-jobs report."""
 
 import json
+from contextvars import ContextVar
 
 from agent_framework import ChatResponse, Content, Message
 
@@ -13,6 +14,7 @@ from agentbuildkit.evaluation import (
     trace_from_audit,
 )
 from agentbuildkit.observability import AuditLog
+from agentbuildkit.teams import TeamBundle
 from agentbuildkit.testing import ScriptedChatClient
 from agentbuildkit.workflows import memory_workflow_store
 from customer_service.connections import MemoryConnectionStore
@@ -22,6 +24,9 @@ from operations_reporting.sheets import JobWindow
 from operations_reporting.team import TEAM_ID, build_team
 
 _AS_OF = "2026-11-16"
+_REVISION_BUNDLE: ContextVar[TeamBundle | None] = ContextVar(
+    "reporting_revision_bundle", default=None
+)
 
 
 def reporting_cases() -> tuple[EvaluationCase, ...]:
@@ -54,12 +59,22 @@ async def run_reporting_evaluation() -> EvaluationReport:
     return await run_evaluation(reporting_cases(), _execute)
 
 
+async def run_bundle_evaluation(bundle: TeamBundle) -> EvaluationReport:
+    """Run the same scripted suite against one candidate revision."""
+    token = _REVISION_BUNDLE.set(bundle)
+    try:
+        return await run_reporting_evaluation()
+    finally:
+        _REVISION_BUNDLE.reset(token)
+
+
 async def _execute(case: EvaluationCase) -> CaseObservation:
     log = AuditLog()
     window = JobWindow(MemoryConnectionStore(), None)
     invented = case.name == "invented-job-is-not-supported"
     summary = "J-100 and J-999 are overdue." if invented else "J-100 is overdue."
     team = build_team(
+        bundle=_REVISION_BUNDLE.get(),
         clients={
             "analyst": ScriptedChatClient(
                 [

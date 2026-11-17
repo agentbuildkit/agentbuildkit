@@ -27,6 +27,36 @@ middleware, and provider/model audit metadata. A bundle cannot turn a side effec
 into a read. The application still owns routing, persistence, approval decisions,
 and trace evaluation using the existing harness APIs.
 
+Drafts version the two installed teams, Customer Service and Operations
+Reporting. They do not install another team or another copy of a team. Edit
+active version copies the revision that is active now. Reset from shipped
+template is a separate action. It does not replace an open draft unless that
+action is submitted, and the editor then shows how the template differs from
+the active revision. An open draft is otherwise left as it is.
+
+A draft edits only the display name, description, purpose, instructions, provider,
+model, and tool selection of a registered template. Role ids, schemas, approval
+policy, and workflow code stay in the application. Published revisions are
+immutable. The content hash binds validation and the scripted offline suite to
+one draft version. Saving or evaluating does not activate. Activation checks
+the current template again and does not publish a draft that no longer matches.
+Activation and rollback append an audit event that stores hashes and revision
+ids, not instruction text. Those two writes share one database transaction.
+The revision is recorded before a run starts, so a pending approval keeps it
+after a restart. Rollback is refused when that revision no longer matches the
+current template, and the active pointer stays where it is.
+
+The scripted suite does not measure a live model and does not prove that
+changed instructions are effective. A missing provider key is reported and is
+not printed. A pattern check can refuse text that looks like a credential and
+does not store that text. It does not prove that other wording contains no
+secret. Spreadsheet assignments are checked again at execution and are not
+restored by rollback. Set `APP_STATE_DIRECTORY` to keep drafts and revisions
+in `revisions.sqlite` beside the other local databases. Without that directory
+they last until the process stops. The revision database is new. An unsupported
+`revisions.sqlite` is copied to a backup and left unchanged. Older workflow,
+recovery, and connection files are not rewritten.
+
 The customer-service example loads `examples/customer_service/team.json` with
 `load_bundle` and resolves it through `definitions`. Typed models and prepared
 tools stay in the application. `build_team` passes those definitions to

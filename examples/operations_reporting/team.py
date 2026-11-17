@@ -61,10 +61,15 @@ def build_team(
     clients: Mapping[str, SupportsChatGetResponse],
     audit_log: AuditLog | None = None,
     read_jobs: FunctionTool,
+    bundle: TeamBundle | None = None,
 ) -> ReportingTeam:
-    """Create the team from injected clients and team.json."""
+    """Create the team from injected clients and a bundle.
+
+    ``bundle`` selects a published revision. When it is omitted, ``team.json``
+    is used.
+    """
     log = audit_log or AuditLog()
-    bundle = reporting_bundle()
+    bundle = reporting_bundle() if bundle is None else bundle
     if bundle.team_id != TEAM_ID:
         raise ValueError("The operations-reporting bundle id does not match the application.")
     definitions = bundle.definitions(schemas=_SCHEMAS, tools={"read_jobs": read_jobs})

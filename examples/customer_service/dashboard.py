@@ -27,7 +27,9 @@ from agentbuildkit.integrations.composio import (
     ComposioRejected,
 )
 from agentbuildkit.observability import AuditEvent
+from agentbuildkit.revisions import Revision, RevisionService
 from agentbuildkit.state.models import RegistryRejected, require_argument_hash
+from agentbuildkit.teams import TeamBundle
 from agentbuildkit.workflows import (
     PendingRequest,
     WorkflowStateStore,
@@ -51,6 +53,7 @@ from customer_service.dashboard_view import (
     Snapshot,
     render_page,
 )
+from customer_service.draft_pages import maybe_revision_page
 from customer_service.evaluation import run_organisation_evaluation
 from customer_service.models import CustomerRequest, FinalOutcome
 from customer_service.recovery import ActionRecovery, MemoryActionRecovery
@@ -63,6 +66,7 @@ from customer_service.sheets import SheetDesk
 from customer_service.team import CUSTOMER_DIAGRAM, Organisation, customer_team_bundle
 
 Evaluate = Callable[[], Coroutine[Any, Any, EvaluationReport]]
+TeamFactory = Callable[[TeamBundle], Organisation]
 _ALREADY = ALREADY_HANDLED
 _UNRESOLVED = UNRESOLVED_RESPONSE
 _MISSING = MISSING_ARGUMENTS
@@ -130,10 +134,16 @@ class DashboardService:
         recovery: ActionRecovery | None = None,
         evaluate: Evaluate | None = None,
         sheets: SheetDesk | None = None,
+        revisions: RevisionService | None = None,
+        team_factory: TeamFactory | None = None,
     ) -> None:
         self.organisation = organisation
         self.store = store
         self.sheets = sheets
+        self.revisions = revisions
+        self._team_factory = team_factory
+        self.last_revision_id = ""
+        self.last_built_instructions = ""
         self.team_id = store.scope
         self.title = customer_team_bundle().display_name
         self.base = ""
@@ -150,12 +160,24 @@ class DashboardService:
     async def submit(self, reference: str, message: str) -> FinalOutcome:
         """Run one request. A side effect stays pending until a person decides."""
         team_id = self.team_id
+        revision = self.revisions.active(team_id) if self.revisions is not None else None
+        organisation = self._for_revision(revision)
+        correlation_id = uuid.uuid4().hex
+        if self.revisions is not None and revision is not None:
+            self.revisions.pin_run(team_id, correlation_id, "", revision.revision_id)
         result = await handle_request(
-            self.organisation,
+            organisation,
             CustomerRequest(reference=reference, message=message),
-            correlation_id=uuid.uuid4().hex,
+            correlation_id=correlation_id,
             store=self.store,
         )
+        if self.revisions is not None and revision is not None and result.pending is not None:
+            self.revisions.pin_run(
+                team_id,
+                result.outcome.correlation_id,
+                result.pending.request_id,
+                revision.revision_id,
+            )
         pending = result.pending
         if pending is not None and result.action_arguments is not None:
             self.recovery.save_pause(
@@ -192,8 +214,13 @@ class DashboardService:
                 ),
                 team_id=team_id,
             )
+        revision = (
+            None
+            if self.revisions is None
+            else self.revisions.revision_for_pending(team_id, request_id, pending.correlation_id)
+        )
         outcome = await resume_service_action(
-            self.organisation,
+            self._for_revision(revision),
             self.store,
             pending,
             reference=reference,
@@ -275,7 +302,7 @@ class DashboardService:
 
     def snapshot(self) -> Snapshot:
         """Read the current state for a page. Nothing is changed or run."""
-        bundle = customer_team_bundle()
+        bundle, title, installed = self._shown_bundle()
         agents = tuple(
             AgentInfo(
                 name=agent.name,
@@ -298,9 +325,9 @@ class DashboardService:
         return Snapshot(
             team_name=bundle.name,
             team_id=self.team_id,
-            title=bundle.display_name,
+            title=title,
             base=self.base,
-            installed=self.installed,
+            installed=installed,
             agents=agents,
             runs=build_runs(self.outcomes, by_correlation),
             approvals=open_approvals,
@@ -327,7 +354,34 @@ class DashboardService:
 
     def page(self, path: str = "/", query: Mapping[str, str] | None = None) -> Page:
         """Render one page with its HTTP status. Secrets are not included."""
-        return render_page(self.snapshot(), path, query)
+        params = query or {}
+        snap = self.snapshot()
+        rendered = maybe_revision_page(snap, self.revisions, path, params)
+        if rendered is not None:
+            return rendered
+        return render_page(snap, path, params)
+
+    def _for_revision(self, revision: Revision | None) -> Organisation:
+        factory = self._team_factory
+        service = self.revisions
+        if revision is None or factory is None or service is None:
+            return self.organisation
+        self.last_revision_id = revision.revision_id
+        organisation = factory(service.bundle_for(revision))
+        self.last_built_instructions = organisation.alex.definition.instructions
+        return organisation
+
+    def _shown_bundle(self) -> tuple[TeamBundle, str, tuple[tuple[str, str], ...]]:
+        if self.revisions is None:
+            bundle = customer_team_bundle()
+            return bundle, bundle.display_name, self.installed
+        revision = self.revisions.active(self.team_id)
+        bundle = self.revisions.bundle_for(revision)
+        installed = tuple(
+            (team_id, self.revisions.active(team_id).config.title)
+            for team_id, _title in self.installed
+        )
+        return bundle, revision.config.title, installed
 
     def render(self, path: str = "/", query: Mapping[str, str] | None = None) -> str:
         """Render one page. Secrets are not included."""

@@ -6,6 +6,7 @@
 
 ## Unreleased
 
+- A local operator can edit the active revision of Customer Service or Operations Reporting. The draft copies that revision. Resetting from the shipped template is a separate action and shows the difference. Validation and a scripted offline suite are bound to that exact revision. The suite does not measure a live model or prove that changed instructions are effective. Activation checks the current template again and does not publish a draft that no longer matches. Rollback is explicit and is refused when the old revision no longer matches the template. The revision is stored before a run starts, and a pending approval keeps it across a restart. This does not install another team. Drafts stay in `revisions.sqlite` when `APP_STATE_DIRECTORY` is set, and in memory otherwise. Existing workflow, recovery, and connection databases are not migrated. An unsupported revision database is left unchanged.
 - The customer-service example builds its agents from `team.json` through the team bundle loader.
 - A local dashboard runs that team, records approval decisions, and shows the audit log and evaluation report.
 - A restarted dashboard recovers a pending approval, its customer reference, and its action arguments. An uncertain service action is not run again. Approval does not run when those arguments were not recovered.

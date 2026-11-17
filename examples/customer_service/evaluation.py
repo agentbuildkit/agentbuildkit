@@ -4,6 +4,7 @@ import json
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from agentbuildkit.evaluation import (
     trace_from_audit,
 )
 from agentbuildkit.observability import AuditLog
+from agentbuildkit.teams import TeamBundle
 from agentbuildkit.testing import ScriptedChatClient
 from agentbuildkit.workflows import memory_workflow_store, sqlite_workflow_store
 from customer_service.models import CustomerRequest, FinalOutcome, RouteDecision
@@ -25,6 +27,9 @@ from customer_service.service import handle_request, resume_service_action
 from customer_service.team import ORGANISATION_SCOPE, Organisation, build_team
 
 LOCAL_MOCK_TOKEN = "local-mock-business-token"
+_REVISION_BUNDLE: ContextVar[TeamBundle | None] = ContextVar(
+    "customer_revision_bundle", default=None
+)
 RAW_MODEL_OUTPUT = "RAW-MODEL-OUTPUT-7f3a"
 _REFERENCE = "A-100"
 _BILLING = CustomerRequest(reference=_REFERENCE, message="Please explain the latest invoice.")
@@ -160,6 +165,15 @@ def organisation_cases() -> tuple[EvaluationCase, ...]:
 async def run_organisation_evaluation() -> EvaluationReport:
     """Run the reference suite and return the platform report."""
     return await run_evaluation(organisation_cases(), execute_case)
+
+
+async def run_bundle_evaluation(bundle: TeamBundle) -> EvaluationReport:
+    """Run the same scripted suite against one candidate revision."""
+    token = _REVISION_BUNDLE.set(bundle)
+    try:
+        return await run_organisation_evaluation()
+    finally:
+        _REVISION_BUNDLE.reset(token)
 
 
 async def execute_case(case: EvaluationCase) -> CaseObservation:
@@ -364,6 +378,7 @@ def _organisation(
         audit_log=audit_log,
         actions=actions,
         configurator=_silent,
+        bundle=_REVISION_BUNDLE.get(),
     )
 
 
