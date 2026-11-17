@@ -61,7 +61,9 @@ jobs:
 
       - name: Pack the npm bootstrapper
         working-directory: npm/agentbuildkit
-        run: npm pack --pack-destination "$GITHUB_WORKSPACE/build/npm"
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/build/npm"
+          npm pack --pack-destination "$GITHUB_WORKSPACE/build/npm"
 
       - name: Assemble the candidate
         run: |

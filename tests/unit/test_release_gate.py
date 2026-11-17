@@ -149,6 +149,7 @@ def test_validation_workflow_cannot_publish() -> None:
     assert "id-token:" not in text
     assert "npm publish" not in text
     assert "pypi-publish" not in text
+    assert 'mkdir -p "$GITHUB_WORKSPACE/build/npm"' in text
 
 
 def test_publish_workflow_reuses_the_validated_candidate() -> None:
