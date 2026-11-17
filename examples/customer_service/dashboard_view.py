@@ -186,6 +186,7 @@ _ICONS = {
         '<path d="M7.2 5.2 8.4 4a2.2 2.2 0 0 1 3.1 3.1L10.3 8.3"/>'
         '<path d="M8.8 10.8 7.6 12a2.2 2.2 0 0 1-3.1-3.1L5.7 7.7"/>'
     ),
+    "edit": '<path d="M9.2 2.6 13.4 6.8 5.2 15H1.5v-3.6z"/>',
     "disk": (
         '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>'
         '<path d="M5 2.5v3.5h6V2.5M5 13.5V9.5h6v4"/>'
@@ -254,6 +255,7 @@ _NAV: tuple[tuple[str, str, str], ...] = (
     ("Approvals", "shield", "/approvals"),
     ("Audit", "log", "/audit"),
     ("Evaluation", "flask", "/evaluation"),
+    ("Drafts", "edit", "/drafts"),
     ("Team details", "team", "/team"),
     ("Connections", "link", "/connections"),
 )

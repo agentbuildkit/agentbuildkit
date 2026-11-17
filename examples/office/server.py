@@ -16,6 +16,8 @@ from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
 from agentbuildkit.applications import RenderedPage
+from agentbuildkit.evaluation import EvaluationReport
+from agentbuildkit.revisions import PreparedEvaluation, RevisionError
 from customer_service.dashboard import (
     STATIC_DIRECTORY,
     STATIC_TYPES,
@@ -26,6 +28,7 @@ from customer_service.dashboard import (
 from customer_service.models import FinalOutcome
 from office.installation import Installation, build_installation
 from office.reporting import ReportingDashboard
+from office.templates import installed_evaluators
 from operations_reporting.jobs import parse_as_of
 
 _TEAM_PATH = re.compile(r"^/teams/(?P<team>[a-z0-9]+(?:-[a-z0-9]+)*)(?P<rest>/.*)?$")
@@ -172,7 +175,14 @@ def serve_installation(
                 return
             match = _TEAM_PATH.fullmatch(path)
             rest = (match.group("rest") if match else "") or "/"
-            if rest in {"/run", "/decide", "/evaluate"}:
+            if _draft_rest(rest) and rest.endswith("/evaluate"):
+                location = _evaluate_draft(installation, path, fields, invoke, on_owner)
+            elif _draft_rest(rest):
+                location = cast(
+                    str,
+                    on_owner(lambda: _draft_post(installation, path, fields)),
+                )
+            elif rest in {"/run", "/decide", "/evaluate"}:
                 location = _post(installation, path, fields, invoke, on_owner)
             else:
                 location = cast(
@@ -398,6 +408,146 @@ def _assign(team: Any, fields: dict[str, list[str]]) -> str:
     except ComposioError:
         notice = "denied"
     return f"/teams/{team.team_id}/team/{agent}?notice={notice}"
+
+
+def _draft_rest(rest: str) -> bool:
+    return rest == "/drafts" or rest.startswith("/drafts/") or rest.startswith("/revisions/")
+
+
+def _draft_post(installation: Installation, path: str, fields: dict[str, list[str]]) -> str:
+    """Save, validate, activate, discard, or roll back. Evaluation is separate."""
+    team_id, rest = _team_rest(path)
+    service = installation.revisions
+    posted = form_field(fields, "team_id")
+    if posted and posted != team_id:
+        return f"/teams/{team_id}/drafts?notice=forbidden"
+    try:
+        if rest == "/drafts":
+            draft = service.create_draft(team_id)
+            return f"/teams/{team_id}/drafts/{draft.draft_id}"
+        if rest == "/drafts/reset":
+            draft = service.reset_from_template(team_id, _version(fields))
+            return f"/teams/{team_id}/drafts/{draft.draft_id}?notice=reset"
+        if rest.startswith("/revisions/") and rest.endswith("/rollback"):
+            revision_id = rest.removeprefix("/revisions/").removesuffix("/rollback")
+            service.rollback(team_id, revision_id)
+            return f"/teams/{team_id}/revisions?notice=rolledback"
+        draft_id, action = _draft_action(rest)
+        if action == "discard":
+            service.discard_draft(team_id, draft_id)
+            return f"/teams/{team_id}/drafts?notice=discarded"
+        version = _version(fields)
+        if action == "validate":
+            service.validate(team_id, draft_id, version)
+            return f"/teams/{team_id}/drafts/{draft_id}?notice=validated"
+        if action == "activate":
+            service.activate(team_id, draft_id, version, form_field(fields, "expected_hash"))
+            return f"/teams/{team_id}/revisions?notice=activated"
+        service.update_draft(team_id, draft_id, version, _payload(service, team_id, fields))
+        return f"/teams/{team_id}/drafts/{draft_id}?notice=saved"
+    except RevisionError as exc:
+        return _draft_target(team_id, rest, exc.code)
+
+
+def _evaluate_draft(
+    installation: Installation,
+    path: str,
+    fields: dict[str, list[str]],
+    invoke: Callable[[Coroutine[Any, Any, object]], object | None],
+    on_owner: Callable[[Callable[[], object]], object],
+) -> str:
+    """Validate on the owner thread, run the scripted suite, then store the hash."""
+    team_id, rest = _team_rest(path)
+    draft_id, _action = _draft_action(rest)
+    version = _version(fields)
+    try:
+        prepared = cast(
+            PreparedEvaluation,
+            on_owner(lambda: installation.revisions.prepare_evaluation(team_id, draft_id, version)),
+        )
+    except RevisionError as exc:
+        return _draft_target(team_id, rest, exc.code)
+    evaluator = installed_evaluators().get(team_id)
+    pending = None if evaluator is None else evaluator(prepared.bundle)
+    report = None if pending is None else invoke(cast(Coroutine[Any, Any, object], pending))
+    if not isinstance(report, EvaluationReport):
+        return _draft_target(team_id, rest, "failed")
+    try:
+        on_owner(
+            lambda: installation.revisions.record_evaluation(
+                team_id,
+                draft_id,
+                prepared.version,
+                prepared.content_hash,
+                report,
+            )
+        )
+    except RevisionError as exc:
+        return _draft_target(team_id, rest, exc.code)
+    return f"/teams/{team_id}/drafts/{draft_id}?notice=evaluated"
+
+
+def _payload(service: Any, team_id: str, fields: dict[str, list[str]]) -> dict[str, object]:
+    template = service.template(team_id)
+    agents: list[dict[str, object]] = []
+    for contract in template.agents:
+        tools = [
+            tool
+            for tool in contract.permitted_tools
+            if tool in contract.required_tools
+            or form_field(fields, f"tool-{contract.name}-{tool}") == "on"
+        ]
+        extra = form_field(fields, f"tools-{contract.name}")
+        if extra:
+            tools.extend(part for part in extra.split(",") if part and part not in tools)
+        agents.append(
+            {
+                "name": contract.name,
+                "purpose": form_field(fields, f"purpose-{contract.name}"),
+                "instructions": form_field(fields, f"instructions-{contract.name}"),
+                "provider": form_field(fields, f"provider-{contract.name}"),
+                "model": form_field(fields, f"model-{contract.name}"),
+                "tools": tools,
+            }
+        )
+    return {
+        "title": form_field(fields, "title"),
+        "description": form_field(fields, "description"),
+        "agents": agents,
+    }
+
+
+def _team_rest(path: str) -> tuple[str, str]:
+    match = _TEAM_PATH.fullmatch(path)
+    if match is None:
+        return "", "/"
+    return match.group("team"), match.group("rest") or "/"
+
+
+def _draft_action(rest: str) -> tuple[str, str]:
+    parts = [part for part in rest.removeprefix("/drafts/").split("/") if part]
+    draft_id = parts[0] if parts else ""
+    action = parts[1] if len(parts) > 1 else ""
+    return draft_id, action
+
+
+def _version(fields: dict[str, list[str]]) -> int:
+    raw = form_field(fields, "expected_version")
+    if not raw.isdigit():
+        return -1
+    return int(raw)
+
+
+def _draft_target(team_id: str, rest: str, code: str) -> str:
+    if rest == "/drafts/reset":
+        return f"/teams/{team_id}/drafts?notice={code}"
+    if rest.startswith("/drafts/"):
+        draft_id = rest.removeprefix("/drafts/").split("/")[0]
+        if draft_id and code != "discarded":
+            return f"/teams/{team_id}/drafts/{draft_id}?notice={code}"
+    if rest.startswith("/revisions/"):
+        return f"/teams/{team_id}/revisions?notice={code}"
+    return f"/teams/{team_id}/drafts?notice={code}"
 
 
 def _unassign(team: Any, agent: str) -> str:

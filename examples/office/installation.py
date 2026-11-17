@@ -13,7 +13,8 @@ from agent_framework import SecretString, SupportsChatGetResponse
 
 from agentbuildkit.integrations.composio import ComposioGateway
 from agentbuildkit.observability import AuditLog
-from agentbuildkit.teams import TeamRegistry
+from agentbuildkit.revisions import MemoryRevisionStore, RevisionService, SqliteRevisionStore
+from agentbuildkit.teams import TeamBundle, TeamRegistry
 from agentbuildkit.workflows import WorkflowStateStore, memory_workflow_store, sqlite_workflow_store
 from customer_service.connections import (
     ConnectionStore,
@@ -24,10 +25,11 @@ from customer_service.dashboard import DashboardService
 from customer_service.evaluation import LOCAL_MOCK_TOKEN
 from customer_service.recovery import ActionRecovery, MemoryActionRecovery, SqliteActionRecovery
 from customer_service.sheets import SheetDesk
-from customer_service.team import ORGANISATION_SCOPE, build_team, customer_team_bundle
+from customer_service.team import ORGANISATION_SCOPE, Organisation, build_team, customer_team_bundle
 from office.reporting import ReportingDashboard
+from office.templates import credential_ready, installed_templates
 from operations_reporting.sheets import JobWindow
-from operations_reporting.team import TEAM_ID, reporting_bundle
+from operations_reporting.team import TEAM_ID, ReportingTeam, reporting_bundle
 from operations_reporting.team import build_team as build_reporting_team
 
 
@@ -40,6 +42,7 @@ class Installation:
     customer: DashboardService
     reporting: ReportingDashboard
     recovery: ActionRecovery
+    revisions: RevisionService
     closed: bool = field(default=False)
 
     def labels(self) -> tuple[tuple[str, str], ...]:
@@ -80,6 +83,11 @@ class Installation:
         self.reporting.store.close()
         self.recovery.close()
         self.connections.close()
+        self.revisions.close()
+
+
+def _quiet(**_kwargs: object) -> None:
+    """Skip a second observability setup when a run rebuilds the team."""
 
 
 def build_installation(
@@ -105,6 +113,7 @@ def build_installation(
         recovery = MemoryActionRecovery()
         customer_store = memory_workflow_store(ORGANISATION_SCOPE, customer_log)
         reporting_store = memory_workflow_store(TEAM_ID, reporting_log)
+        revision_store = MemoryRevisionStore()
     else:
         directory.mkdir(parents=True, exist_ok=True)
         connections = SqliteConnectionStore(directory / "connections.sqlite")
@@ -112,6 +121,13 @@ def build_installation(
         database = directory / "workflows.sqlite"
         customer_store = sqlite_workflow_store(database, ORGANISATION_SCOPE, customer_log)
         reporting_store = sqlite_workflow_store(database, TEAM_ID, reporting_log)
+        revision_store = SqliteRevisionStore(directory / "revisions.sqlite")
+    revisions = RevisionService(
+        revision_store,
+        installed_templates(),
+        credentials=credential_ready,
+    )
+    revisions.seed()
     customer_desk = SheetDesk(connections, gateway, package_missing=package_missing)
     organisation = build_team(
         clients=customer_clients,
@@ -120,11 +136,25 @@ def build_installation(
         connected_reads=customer_desk.tools_for,
         account_guard=customer_desk.guard_account,
     )
+
+    def customer_factory(bundle: TeamBundle) -> Organisation:
+        return build_team(
+            clients=customer_clients,
+            api_token=SecretString(LOCAL_MOCK_TOKEN),
+            audit_log=customer_log,
+            connected_reads=customer_desk.tools_for,
+            account_guard=customer_desk.guard_account,
+            configurator=_quiet,
+            bundle=bundle,
+        )
+
     customer = DashboardService(
         organisation,
         customer_store,
         recovery=recovery,
         sheets=customer_desk,
+        revisions=revisions,
+        team_factory=customer_factory,
     )
     window = JobWindow(connections, gateway)
     reporting_team = build_reporting_team(
@@ -132,11 +162,34 @@ def build_installation(
         audit_log=reporting_log,
         read_jobs=window.tool(),
     )
-    reporting = ReportingDashboard(reporting_team, reporting_store, window, recovery)
+
+    def reporting_factory(bundle: TeamBundle) -> ReportingTeam:
+        return build_reporting_team(
+            clients=reporting_clients,
+            audit_log=reporting_log,
+            read_jobs=window.tool(),
+            bundle=bundle,
+        )
+
+    reporting = ReportingDashboard(
+        reporting_team,
+        reporting_store,
+        window,
+        recovery,
+        revisions=revisions,
+        team_factory=reporting_factory,
+    )
     installed = tuple((item.team_id, item.title) for item in registry.teams())
     customer.base = f"/teams/{customer.team_id}"
     customer.installed = installed
     customer.close_connection_store = False
     reporting.base = f"/teams/{reporting.team_id}"
     reporting.installed = installed
-    return Installation(registry, connections, customer, reporting, recovery)
+    return Installation(
+        registry,
+        connections,
+        customer,
+        reporting,
+        recovery,
+        revisions,
+    )

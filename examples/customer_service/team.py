@@ -126,13 +126,15 @@ def build_team(
     roles: Mapping[str, ProviderConfiguration] | None = None,
     connected_reads: Callable[[str], tuple[FunctionTool, ...]] | None = None,
     account_guard: Callable[[BusinessSystem], FunctionTool] | None = None,
+    bundle: TeamBundle | None = None,
 ) -> Organisation:
-    """Create the team from injected clients and ``team.json``.
+    """Create the team from injected clients and a bundle.
 
     ``clients`` is the test and production seam. A scripted client is used as
     given. The bundle supplies instructions, schemas, and tool allowlists.
     ``roles`` replaces the provider and model for named roles. The side-effect
-    tool stays on the approval workflow.
+    tool stays on the approval workflow. ``bundle`` selects a published
+    revision. When it is omitted, ``team.json`` is used.
     """
     log = audit_log or AuditLog()
     resolved: AppSettings = settings or {
@@ -146,7 +148,7 @@ def build_team(
         configure_observability(resolved, configurator=configurator)
     business = BusinessSystem(audit_log=log, api_token=api_token, actions=actions)
     account_tool = None if account_guard is None else account_guard(business)
-    definitions = _definitions(business, roles, account_tool)
+    definitions = _definitions(business, roles, account_tool, bundle)
     if connected_reads is not None:
         definitions = tuple(
             replace(item, tools=item.tools + connected_reads(item.name)) for item in definitions
@@ -173,10 +175,11 @@ def _definitions(
     business: BusinessSystem,
     roles: Mapping[str, ProviderConfiguration] | None,
     account_tool: FunctionTool | None = None,
+    bundle: TeamBundle | None = None,
 ) -> tuple[AgentDefinition[BaseModel, BaseModel], ...]:
-    """Resolve team.json against this application's schemas and read tools."""
-    bundle = customer_team_bundle()
-    definitions = bundle.definitions(
+    """Resolve a bundle against this application's schemas and read tools."""
+    selected_bundle = customer_team_bundle() if bundle is None else bundle
+    definitions = selected_bundle.definitions(
         schemas=_SCHEMAS,
         tools={
             "read_account": account_tool or business.read_account,
@@ -185,7 +188,18 @@ def _definitions(
     )
     if tuple(definition.name for definition in definitions) != _ROLE_ORDER:
         raise ValueError("The customer-service bundle does not match the application.")
-    selected = _role_configuration(roles)
+    if bundle is None:
+        selected = _role_configuration(roles)
+    else:
+        selected = {
+            item.name: ProviderConfiguration(provider=item.provider, model=item.model)
+            for item in definitions
+        }
+        if roles is not None:
+            unknown = sorted(set(roles) - set(selected))
+            if unknown:
+                raise ValueError("A provider configuration was given for an unknown role.")
+            selected.update(roles)
     return tuple(
         replace(
             definition,

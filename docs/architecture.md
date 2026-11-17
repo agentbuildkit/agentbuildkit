@@ -53,6 +53,8 @@ Give each agent only the tools its job needs. In the reference team, Sam has `re
 
 `memory_workflow_store` is for a single local process. `sqlite_workflow_store` is the durable store. The CLI uses SQLite when `APP_STATE_DIRECTORY` is set, and writes `workflows.sqlite` in that directory. The container sets the variable to `/data` and expects that path to be a mounted volume.
 
+Team drafts are a separate file, `revisions.sqlite`, in that same directory. They version the two installed teams. They are not the work-item drafts below. Without the directory, team drafts last only until the process stops. An unsupported revision file is copied to a backup and left unchanged. Published revisions are immutable. Activation and rollback store hashes and revision ids, not instruction text. A run records its revision before it starts.
+
 Checkpoints store hashes, identifiers, and approval metadata. They do not store argument values, prompts, model responses, or credentials. Resume rebuilds the workflow from the organisation code and requires the supplied arguments to hash to the stored value. A file whose schema version is not `1` or `2` is rejected. Checkpoint payloads from either of those versions stay readable, because the checkpoint body did not change.
 
 `pending_requests.run_id` is the correlation id copied by the version 1 checkpoint format. It is not a foreign key to the run registry.

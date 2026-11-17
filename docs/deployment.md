@@ -20,7 +20,9 @@ Use this before running AgentBuildKit or the customer-service example. The examp
 
 - [ ] `APP_STATE_DIRECTORY` is set.
 - [ ] That directory is a mounted volume, and the container filesystem is not the store.
-- [ ] A restart still lists a pending approval that was paused before the restart.
+- [ ] `revisions.sqlite` stays on that volume beside the workflow, recovery, and connection files. Deleting it drops published team revisions. It does not hold credentials or spreadsheet assignments.
+- [ ] An unsupported `revisions.sqlite` is left unchanged after its backup copy is written. Do not replace it with an empty file to force a reset.
+- [ ] A restart still lists a pending approval that was paused before the restart, on the revision that run started with.
 - [ ] A second approval of the same request does not repeat the side effect.
 
 ## Model

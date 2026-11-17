@@ -170,6 +170,7 @@ details.more[open]>summary .chev{transform:rotate(90deg)}
 /* Route trace */
 .trace{display:grid;grid-template-columns:repeat(6,156px);column-gap:28px;row-gap:20px;padding:8px 0 4px;overflow-x:auto}
 .trace.cols-1{grid-template-columns:repeat(1,156px)}.trace.cols-2{grid-template-columns:repeat(2,156px)}.trace.cols-3{grid-template-columns:repeat(3,156px)}.trace.cols-4{grid-template-columns:repeat(4,156px)}.trace.cols-5{grid-template-columns:repeat(5,156px)}
+.diff{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .node{position:relative;min-height:56px;padding:8px 10px;border-radius:8px;border:1px solid #D0D7E0;background:var(--surface);display:flex;flex-direction:column;justify-content:center;gap:1px}
 .node b{font-weight:600;font-size:13.5px;display:flex;align-items:center;gap:6px;min-width:0}
 .node b .mono{font-size:12px;font-weight:500}
