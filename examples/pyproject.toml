@@ -1,6 +1,6 @@
 [project]
 name = "agentbuildkit-templates"
-version = "0.2.0"
+version = "0.2.1"
 description = "First-party Customer Service and Operations Reporting templates for AgentBuildKit."
 readme = "README.md"
 license = "Apache-2.0"

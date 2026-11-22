@@ -109,14 +109,17 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${VALIDATION_RUN}" > run.json
           PYTHONPATH=. python scripts/release_candidate.py verify-run run.json "$GITHUB_SHA"
           PYTHONPATH=. python scripts/release_candidate.py verify-files candidate "$GITHUB_SHA" "$VALIDATION_RUN"
-      - name: Require the published harness to match this candidate
-        run: PYTHONPATH=. python scripts/release_publish.py harness candidate require-match
-      - name: Compare the templates and stop on a mismatch
+      - name: Authorize templates 0.2.1 and leave the harness unpublished
         id: remote
         run: |
           mkdir -p publish
-          cp candidate/agentbuildkit_templates-0.2.0-*.whl candidate/agentbuildkit_templates-0.2.0.tar.gz publish/
-          PYTHONPATH=. python scripts/release_publish.py templates publish
+          cp \
+            candidate/agentbuildkit_templates-0.2.1-py3-none-any.whl \
+            candidate/agentbuildkit_templates-0.2.1.tar.gz \
+            publish/
+          test "$(find publish -type f | wc -l)" -eq 2
+          find publish -type f -print
+          PYTHONPATH=. python scripts/release_publish.py templates-0.2.1 candidate
       - name: Publish the templates when they are absent
         if: steps.remote.outputs.decision == 'absent'
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -151,18 +154,40 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.12"
-      - name: Require the public files to match the candidate
-        run: |
-          PYTHONPATH=. python scripts/release_publish.py harness candidate require-match
-          PYTHONPATH=. python scripts/release_publish.py templates candidate require-match
+      - name: Require the published templates 0.2.1 files to match the candidate
+        run: PYTHONPATH=. python scripts/release_publish.py templates-0.2.1 candidate require-match
       - name: Install the published pair and run offline checks
         run: |
           uv venv /tmp/agentbuildkit-public --python 3.12
           uv pip install --python /tmp/agentbuildkit-public/bin/python \
-            "agentbuildkit==0.2.0" "agentbuildkit-templates==0.2.0"
+            "agentbuildkit==0.2.0" "agentbuildkit-templates==0.2.1"
           /tmp/agentbuildkit-public/bin/agentkit version
           /tmp/agentbuildkit-public/bin/agentkit doctor
           /tmp/agentbuildkit-public/bin/agentkit demo --approve
+          /tmp/agentbuildkit-public/bin/python - << 'PY'
+          from importlib.metadata import version
+          from pathlib import Path
+          import agentbuildkit_templates
+
+          if version("agentbuildkit") != "0.2.0":
+              raise SystemExit("The installed harness is not 0.2.0.")
+          if version("agentbuildkit-templates") != "0.2.1":
+              raise SystemExit("The installed templates package is not 0.2.1.")
+          root = Path(agentbuildkit_templates.__file__).resolve().parent
+          view = (root / "customer_service" / "dashboard_view.py").read_text(encoding="utf-8")
+          css = (root / "customer_service" / "static" / "dashboard.css").read_text(encoding="utf-8")
+          font = (
+              root
+              / "customer_service"
+              / "static"
+              / "fonts"
+              / "instrument-serif-latin-400-italic.woff2"
+          )
+          if "at a <em>glance</em>" not in view:
+              raise SystemExit("The installed dashboard is missing the new heading.")
+          if "instrument-serif-latin-400-italic.woff2" not in css or not font.is_file():
+              raise SystemExit("The installed dashboard is missing the bundled font.")
+          PY
 
   publish-npm:
     name: Publish the npm bootstrapper

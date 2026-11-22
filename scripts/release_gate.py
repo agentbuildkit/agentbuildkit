@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 HARNESS_VERSION = "0.2.0"
-TEMPLATES_VERSION = "0.2.0"
+TEMPLATES_VERSION = "0.2.1"
 HARNESS_BOUND = "agentbuildkit>=0.2.0,<0.3.0"
 NPM_VERSION = "0.0.4"
 
@@ -20,6 +20,9 @@ _TEMPLATE_PATHS = (
     "agentbuildkit_templates/customer_service/static/dashboard.css",
     "agentbuildkit_templates/customer_service/static/dashboard.js",
     "agentbuildkit_templates/customer_service/static/fonts/OFL-InstrumentSans.txt",
+    "agentbuildkit_templates/customer_service/static/fonts/OFL-InstrumentSerif.txt",
+    "agentbuildkit_templates/customer_service/static/fonts/instrument-serif-latin-400-italic.woff2",
+    "agentbuildkit_templates/customer_service/dashboard_view.py",
     "agentbuildkit_templates/operations_reporting/team.json",
 )
 
@@ -37,7 +40,7 @@ def classify_release(local: dict[str, str], remote: dict[str, str]) -> str:
 
 
 def versions_match(harness: str, templates: str, npm: str, bound: str) -> bool:
-    """True when the candidate metadata is the prepared 0.2.0 release."""
+    """True when the candidate metadata is the prepared templates 0.2.1 release."""
     return (
         harness == HARNESS_VERSION
         and templates == TEMPLATES_VERSION

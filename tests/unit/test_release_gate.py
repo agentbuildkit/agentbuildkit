@@ -2,6 +2,7 @@
 
 import hashlib
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -41,8 +42,9 @@ def test_a_partial_file_list_is_a_conflict() -> None:
 
 
 def test_prepared_versions_match() -> None:
-    assert versions_match("0.2.0", "0.2.0", "0.0.4", HARNESS_BOUND)
-    assert not versions_match("0.1.0", "0.2.0", "0.0.4", HARNESS_BOUND)
+    assert versions_match("0.2.0", "0.2.1", "0.0.4", HARNESS_BOUND)
+    assert not versions_match("0.2.0", "0.2.0", "0.0.4", HARNESS_BOUND)
+    assert not versions_match("0.1.0", "0.2.1", "0.0.4", HARNESS_BOUND)
 
 
 def test_remote_digest_map_uses_sha256() -> None:
@@ -78,11 +80,21 @@ def test_archive_scan_rejects_state_and_requires_templates(tmp_path: Path) -> No
             "agentbuildkit_templates/customer_service/static/fonts/OFL-InstrumentSans.txt",
             "a",
         )
+        archive.writestr(
+            "agentbuildkit_templates/customer_service/static/fonts/OFL-InstrumentSerif.txt",
+            "a",
+        )
+        archive.writestr(
+            "agentbuildkit_templates/customer_service/static/fonts/"
+            "instrument-serif-latin-400-italic.woff2",
+            "a",
+        )
+        archive.writestr("agentbuildkit_templates/customer_service/dashboard_view.py", "a")
         archive.writestr("agentbuildkit_templates/operations_reporting/team.json", "{}")
         archive.writestr("LICENSE", "Apache")
         archive.writestr("agentbuildkit_templates/.env", "SECRET=1")
     problems = archive_problems(wheel, templates=True)
-    assert any(item.startswith("banned path:") for item in problems)
+    assert problems == ["banned path: agentbuildkit_templates/.env"]
 
     source = tmp_path / "agentbuildkit-0.2.0.tar.gz"
     import io
@@ -189,8 +201,23 @@ def test_publish_workflow_reuses_the_validated_candidate() -> None:
     assert npm_job.index("npm install -g npm@11.5.1") < npm_job.index(
         'npm publish --provenance --access public "$tarball"'
     )
-    assert "release_publish.py harness candidate require-match" in text
-    assert "release_publish.py templates candidate require-match" in text
+    templates_job = text.split("  publish-templates:", 1)[1].split("  verify-python:", 1)[0]
+    assert "release_publish.py templates-0.2.1 candidate" in templates_job
+    assert "agentbuildkit_templates-0.2.1-py3-none-any.whl" in templates_job
+    assert "agentbuildkit_templates-0.2.1.tar.gz" in templates_job
+    assert "agentbuildkit_templates-0.2.0" not in templates_job
+    assert "agentbuildkit-0.2.0" not in templates_job
+    assert "npm publish" not in templates_job
+    assert 'test "$(find publish -type f | wc -l)" -eq 2' in templates_job
+    verify_job = text.split("  verify-python:", 1)[1].split("  publish-npm:", 1)[0]
+    assert "templates-0.2.1 candidate require-match" in verify_job
+    assert '"agentbuildkit==0.2.0"' in verify_job
+    assert '"agentbuildkit-templates==0.2.1"' in verify_job
+    assert "harness candidate require-match" not in verify_job
+    assert "at a <em>glance</em>" in verify_job
+    harness_job = text.split("  publish-harness:", 1)[1].split("  publish-templates:", 1)[0]
+    assert "release_publish.py harness publish" in harness_job
+    assert "decision == 'absent'" in harness_job
 
 
 def test_release_workflows_stay_out_of_future_source_archives() -> None:
@@ -202,6 +229,13 @@ def test_release_workflows_stay_out_of_future_source_archives() -> None:
 
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _fetch_bytes(data: bytes) -> Callable[[str], bytes]:
+    def fetch(_url: str) -> bytes:
+        return data
+
+    return fetch
 
 
 def _wheel(code: bytes, readme: bytes, metadata: bytes) -> bytes:
@@ -241,14 +275,14 @@ def test_npm_bridge_keeps_published_code_and_allows_readme_text(
     for name, data in files.items():
         (tmp_path / name).write_bytes(data)
     monkeypatch.setattr("scripts.release_publish.ORIGINAL_RELEASE_DIGESTS", digests)
-    monkeypatch.setattr("scripts.release_publish.fetch_bytes", lambda _url: published_wheel)
+    monkeypatch.setattr("scripts.release_publish.fetch_bytes", _fetch_bytes(published_wheel))
 
     def fake_json(url: str) -> dict[str, object]:
         if "agentbuildkit-templates" in url:
             names = [name for name in digests if name.startswith("agentbuildkit_templates-")]
         else:
             names = [name for name in digests if name.startswith("agentbuildkit-")]
-        urls = []
+        urls: list[dict[str, object]] = []
         for name in names:
             urls.append(
                 {
@@ -267,4 +301,195 @@ def test_npm_bridge_keeps_published_code_and_allows_readme_text(
         _wheel(b"changed", b"new-readme", b"new-meta")
     )
     with pytest.raises(SystemExit, match=r"code does not match the published 0\.2\.0 release"):
+        verify_npm_bridge(tmp_path)
+
+
+def _templates_wheel() -> bytes:
+    import io
+    import zipfile
+
+    members = {
+        "agentbuildkit_templates/customer_service/team.json": b"{}",
+        "agentbuildkit_templates/customer_service/static/dashboard.css": (
+            b'url("fonts/instrument-serif-latin-400-italic.woff2")'
+        ),
+        "agentbuildkit_templates/customer_service/static/dashboard.js": b"a",
+        "agentbuildkit_templates/customer_service/static/fonts/OFL-InstrumentSans.txt": b"a",
+        "agentbuildkit_templates/customer_service/static/fonts/OFL-InstrumentSerif.txt": b"a",
+        "agentbuildkit_templates/customer_service/static/fonts/"
+        "instrument-serif-latin-400-italic.woff2": b"font",
+        "agentbuildkit_templates/customer_service/dashboard_view.py": (
+            b"<h1>Customer Service at a <em>glance</em></h1>"
+        ),
+        "agentbuildkit_templates/operations_reporting/team.json": b"{}",
+        "LICENSE": b"Apache",
+        "agentbuildkit_templates-0.2.1.dist-info/METADATA": (
+            b"Metadata-Version: 2.4\n"
+            b"Name: agentbuildkit-templates\n"
+            b"Version: 0.2.1\n"
+            b"Requires-Dist: agentbuildkit<0.3.0,>=0.2.0\n"
+        ),
+        "agentbuildkit_templates-0.2.1.dist-info/RECORD": b"record",
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in members.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+def _write_templates_candidate(directory: Path, harness_wheel: bytes) -> None:
+    (directory / "agentbuildkit-0.2.0-py3-none-any.whl").write_bytes(harness_wheel)
+    (directory / "agentbuildkit-0.2.0.tar.gz").write_bytes(b"sdist-may-differ")
+    (directory / "agentbuildkit_templates-0.2.1-py3-none-any.whl").write_bytes(_templates_wheel())
+    (directory / "agentbuildkit_templates-0.2.1.tar.gz").write_bytes(b"templates-sdist")
+    (directory / "agentbuildkit-0.0.4.tgz").write_bytes(b"npm-must-not-be-uploaded")
+
+
+def test_templates_release_uploads_021_and_keeps_the_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.release_publish import TEMPLATES_RELEASE_AUTHORIZATION, verify_templates_release
+
+    published_harness = _wheel(b"harness-code", b"old-readme", b"old-meta")
+    digests = {
+        "agentbuildkit-0.2.0-py3-none-any.whl": _digest(published_harness),
+        "agentbuildkit-0.2.0.tar.gz": _digest(b"original-sdist"),
+        "agentbuildkit_templates-0.2.0-py3-none-any.whl": _digest(b"old-templates"),
+        "agentbuildkit_templates-0.2.0.tar.gz": _digest(b"old-templates-sdist"),
+    }
+    candidate_harness = _wheel(b"harness-code", b"readme-may-differ", b"metadata-may-differ")
+    _write_templates_candidate(tmp_path, candidate_harness)
+    monkeypatch.setattr("scripts.release_publish.ORIGINAL_RELEASE_DIGESTS", digests)
+    monkeypatch.setattr("scripts.release_publish.fetch_bytes", _fetch_bytes(published_harness))
+
+    def fake_json(url: str) -> dict[str, object] | None:
+        if url.endswith("/0.2.1/json"):
+            return None
+        names = [
+            name
+            for name in digests
+            if name.startswith("agentbuildkit-") and not name.startswith("agentbuildkit_")
+        ]
+        return {
+            "urls": [
+                {
+                    "filename": name,
+                    "url": f"https://files.test/{name}",
+                    "digests": {"sha256": digests[name]},
+                }
+                for name in names
+            ]
+        }
+
+    monkeypatch.setattr("scripts.release_publish.fetch_json", fake_json)
+    assert verify_templates_release(tmp_path) == "absent"
+    assert TEMPLATES_RELEASE_AUTHORIZATION == "publish-templates-0.2.1"
+
+    (tmp_path / "agentbuildkit-0.2.0-py3-none-any.whl").write_bytes(
+        _wheel(b"changed", b"readme-may-differ", b"metadata-may-differ")
+    )
+    with pytest.raises(SystemExit, match="Harness wheel code does not match"):
+        verify_templates_release(tmp_path)
+
+
+def test_templates_release_stops_when_021_bytes_differ(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.release_publish import verify_templates_release
+
+    published_harness = _wheel(b"harness-code", b"old-readme", b"old-meta")
+    digests = {
+        "agentbuildkit-0.2.0-py3-none-any.whl": _digest(published_harness),
+        "agentbuildkit-0.2.0.tar.gz": _digest(b"original-sdist"),
+        "agentbuildkit_templates-0.2.0-py3-none-any.whl": _digest(b"old-templates"),
+        "agentbuildkit_templates-0.2.0.tar.gz": _digest(b"old-templates-sdist"),
+    }
+    _write_templates_candidate(
+        tmp_path,
+        _wheel(b"harness-code", b"readme-may-differ", b"metadata-may-differ"),
+    )
+    monkeypatch.setattr("scripts.release_publish.ORIGINAL_RELEASE_DIGESTS", digests)
+    monkeypatch.setattr("scripts.release_publish.fetch_bytes", _fetch_bytes(published_harness))
+
+    def fake_json(url: str) -> dict[str, object]:
+        if url.endswith("/0.2.1/json"):
+            return {
+                "urls": [
+                    {
+                        "filename": "agentbuildkit_templates-0.2.1-py3-none-any.whl",
+                        "url": "https://files.test/wheel",
+                        "digests": {"sha256": "different"},
+                    },
+                    {
+                        "filename": "agentbuildkit_templates-0.2.1.tar.gz",
+                        "url": "https://files.test/sdist",
+                        "digests": {"sha256": "different"},
+                    },
+                ]
+            }
+        names = [
+            name
+            for name in digests
+            if name.startswith("agentbuildkit-") and not name.startswith("agentbuildkit_")
+        ]
+        return {
+            "urls": [
+                {
+                    "filename": name,
+                    "url": f"https://files.test/{name}",
+                    "digests": {"sha256": digests[name]},
+                }
+                for name in names
+            ]
+        }
+
+    monkeypatch.setattr("scripts.release_publish.fetch_json", fake_json)
+    with pytest.raises(SystemExit, match="does not match the validated candidate"):
+        verify_templates_release(tmp_path)
+
+
+def test_npm_bridge_refuses_the_templates_021_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.release_publish import verify_npm_bridge
+
+    published_harness = _wheel(b"harness-code", b"old-readme", b"old-meta")
+    digests = {
+        "agentbuildkit-0.2.0-py3-none-any.whl": _digest(published_harness),
+        "agentbuildkit-0.2.0.tar.gz": _digest(b"original-sdist"),
+        "agentbuildkit_templates-0.2.0-py3-none-any.whl": _digest(b"old-templates"),
+        "agentbuildkit_templates-0.2.0.tar.gz": _digest(b"old-templates-sdist"),
+    }
+    _write_templates_candidate(
+        tmp_path,
+        _wheel(b"harness-code", b"readme-may-differ", b"metadata-may-differ"),
+    )
+    monkeypatch.setattr("scripts.release_publish.ORIGINAL_RELEASE_DIGESTS", digests)
+    monkeypatch.setattr("scripts.release_publish.fetch_bytes", _fetch_bytes(published_harness))
+
+    def fake_json(url: str) -> dict[str, object]:
+        if "agentbuildkit-templates" in url:
+            names = [name for name in digests if name.startswith("agentbuildkit_templates-")]
+        else:
+            names = [name for name in digests if name.startswith("agentbuildkit-")]
+        return {
+            "urls": [
+                {
+                    "filename": name,
+                    "url": f"https://files.test/{name}",
+                    "digests": {"sha256": digests[name]},
+                }
+                for name in names
+            ]
+        }
+
+    monkeypatch.setattr("scripts.release_publish.fetch_json", fake_json)
+    with pytest.raises(
+        SystemExit,
+        match=r"agentbuildkit_templates-0\.2\.0-py3-none-any\.whl",
+    ):
         verify_npm_bridge(tmp_path)
