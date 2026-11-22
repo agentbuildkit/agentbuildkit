@@ -16,6 +16,32 @@ from scripts.release_gate import classify_release
 _HARNESS_URL = "https://pypi.org/pypi/agentbuildkit/0.2.0/json"
 _TEMPLATES_URL = "https://pypi.org/pypi/agentbuildkit-templates/0.2.0/json"
 
+# This authorizes only the npm 0.0.3 publication for the already published
+# 0.2.0 Python release. It does not allow a different wheel, template archive,
+# or npm tarball, and it does not republish Python.
+NPM_BRIDGE_AUTHORIZATION = "publish-npm-0.0.3"
+ORIGINAL_RELEASE_DIGESTS: dict[str, str] = {
+    "agentbuildkit-0.2.0-py3-none-any.whl": (
+        "b42c49f0ce7d4a38fa1cca89f902fe06beb6b36ed2c507f1b4c08542ab2b60fa"
+    ),
+    "agentbuildkit-0.2.0.tar.gz": (
+        "5eb89609940d58740ecc980ed08c5f7c9fb4b002bea0187482836149d61ff209"
+    ),
+    "agentbuildkit_templates-0.2.0-py3-none-any.whl": (
+        "11800f794f3f0160893fba72971efe9c266df965ba4f54e9675968407c8e621e"
+    ),
+    "agentbuildkit_templates-0.2.0.tar.gz": (
+        "873030192f3eefad10d1253829dad97679522599dbc066e903c41ba2a28daeae"
+    ),
+    "agentbuildkit-0.0.3.tgz": ("f6997809d69db14c2e6c5f4ec223c915c671a70bd4fb8c8e750a83a450fc3551"),
+}
+_CANDIDATE_MUST_MATCH = (
+    "agentbuildkit-0.2.0-py3-none-any.whl",
+    "agentbuildkit_templates-0.2.0-py3-none-any.whl",
+    "agentbuildkit_templates-0.2.0.tar.gz",
+    "agentbuildkit-0.0.3.tgz",
+)
+
 
 def remote_digests(payload: Mapping[str, object]) -> dict[str, str]:
     """Map filenames to sha256 values from a PyPI JSON body."""
@@ -74,6 +100,48 @@ def write_decision(decision: str) -> None:
             handle.write(f"decision={decision}\n")
 
 
+def _published_python(package: str) -> dict[str, str]:
+    """The original Python files for one distribution. The npm tarball is excluded."""
+    prefix = "agentbuildkit_templates-" if package == "templates" else "agentbuildkit-"
+    return {
+        name: digest
+        for name, digest in ORIGINAL_RELEASE_DIGESTS.items()
+        if name.startswith(prefix)
+        and name.endswith((".whl", ".tar.gz"))
+        and not (package == "harness" and name.startswith("agentbuildkit_templates-"))
+    }
+
+
+def verify_npm_bridge(directory: Path) -> None:
+    """Accept the workflow-only source-archive change for this npm publication.
+
+    PyPI must still serve the original 0.2.0 files. The candidate wheel, template
+    archives, and npm tarball must be those same bytes. The candidate harness
+    source archive is not published and may contain the corrected workflow.
+    """
+    for package, url in (("harness", _HARNESS_URL), ("templates", _TEMPLATES_URL)):
+        remote = fetch_json(url)
+        if remote is None:
+            raise SystemExit("The original Python 0.2.0 packages must stay published.")
+        published = remote_digests(remote)
+        expected = _published_python(package)
+        if published != expected:
+            raise SystemExit(
+                "The published Python packages are not the original 0.2.0 release. Stop."
+            )
+    for name in _CANDIDATE_MUST_MATCH:
+        path = directory / name
+        if not path.is_file():
+            raise SystemExit(f"{name} is not a regular file in the validated candidate.")
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual != ORIGINAL_RELEASE_DIGESTS[name]:
+            raise SystemExit(f"{name} does not match the original validated release. Stop.")
+    source_archive = directory / "agentbuildkit-0.2.0.tar.gz"
+    if not source_archive.is_file():
+        raise SystemExit("The candidate harness source archive is missing.")
+    print(NPM_BRIDGE_AUTHORIZATION)
+
+
 def decide(local: dict[str, str], remote: dict[str, str], *, require_match: bool = False) -> str:
     """Classify one package and stop when the published bytes differ."""
     decision = classify_release(local, remote)
@@ -119,8 +187,11 @@ def main(argv: list[str]) -> None:
             raise SystemExit("Publish and verify both Python packages before the npm package.")
         print("agentbuildkit 0.2.0 and agentbuildkit-templates 0.2.0 are published")
         return
+    if command == "npm-bridge":
+        verify_npm_bridge(Path(argv[2]))
+        return
     raise SystemExit(
-        "Usage: release_publish.py harness|templates|require-harness|require-python-pair"
+        "Usage: release_publish.py harness|templates|require-harness|require-python-pair|npm-bridge"
     )
 
 

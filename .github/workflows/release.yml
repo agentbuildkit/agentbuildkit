@@ -195,10 +195,8 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${VALIDATION_RUN}" > run.json
           PYTHONPATH=. python scripts/release_candidate.py verify-run run.json "$GITHUB_SHA"
           PYTHONPATH=. python scripts/release_candidate.py verify-files candidate "$GITHUB_SHA" "$VALIDATION_RUN"
-      - name: Require both public Python packages to match this candidate
-        run: |
-          PYTHONPATH=. python scripts/release_publish.py harness candidate require-match
-          PYTHONPATH=. python scripts/release_publish.py templates candidate require-match
+      - name: Require the original Python release and npm tarball
+        run: PYTHONPATH=. python scripts/release_publish.py npm-bridge candidate
       - name: Install Node.js 22
         uses: actions/setup-node@v4
         with:

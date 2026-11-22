@@ -1,5 +1,7 @@
 """Offline checks for the release gate. These tests do not publish."""
 
+import hashlib
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -181,3 +183,57 @@ def test_publish_workflow_reuses_the_validated_candidate() -> None:
     assert 'npm publish --provenance --access public "$tarball"' in text
     assert "npm publish --provenance --access public candidate/" not in text
     assert "The npm tarball does not match the validated digest." in text
+    npm_job = text.split("  publish-npm:", 1)[1].split("  verify-npm:", 1)[0]
+    assert "release_publish.py npm-bridge candidate" in npm_job
+    assert "require-match" not in npm_job
+    assert "release_publish.py harness candidate require-match" in text
+    assert "release_publish.py templates candidate require-match" in text
+
+
+def test_release_workflows_stay_out_of_future_source_archives() -> None:
+    project = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    excluded = project["tool"]["hatch"]["build"]["targets"]["sdist"]["exclude"]
+    assert "/.github/workflows/release.yml" in excluded
+    assert "/.github/workflows/release-validate.yml" in excluded
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def test_npm_bridge_keeps_the_original_bytes_and_allows_the_workflow_archive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.release_publish import verify_npm_bridge
+
+    files = {
+        "agentbuildkit-0.2.0-py3-none-any.whl": b"wheel",
+        "agentbuildkit-0.2.0.tar.gz": b"workflow-only-sdist",
+        "agentbuildkit_templates-0.2.0-py3-none-any.whl": b"templates-wheel",
+        "agentbuildkit_templates-0.2.0.tar.gz": b"templates-sdist",
+        "agentbuildkit-0.0.3.tgz": b"npm-tarball",
+    }
+    digests = {name: _digest(data) for name, data in files.items()}
+    digests["agentbuildkit-0.2.0.tar.gz"] = _digest(b"original-sdist")
+    for name, data in files.items():
+        (tmp_path / name).write_bytes(data)
+    monkeypatch.setattr("scripts.release_publish.ORIGINAL_RELEASE_DIGESTS", digests)
+
+    def fake_json(url: str) -> dict[str, object]:
+        if "agentbuildkit-templates" in url:
+            names = [name for name in digests if name.startswith("agentbuildkit_templates-")]
+        else:
+            names = [
+                name
+                for name in digests
+                if name.startswith("agentbuildkit-") and not name.endswith(".tgz")
+            ]
+        urls = [{"filename": name, "digests": {"sha256": digests[name]}} for name in names]
+        return {"urls": urls}
+
+    monkeypatch.setattr("scripts.release_publish.fetch_json", fake_json)
+    verify_npm_bridge(tmp_path)
+    (tmp_path / "agentbuildkit-0.0.3.tgz").write_bytes(b"different-tarball")
+    with pytest.raises(SystemExit, match="does not match the original validated release"):
+        verify_npm_bridge(tmp_path)

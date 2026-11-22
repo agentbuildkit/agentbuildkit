@@ -64,7 +64,11 @@ members = ["examples"]
 packages = ["src/agentbuildkit"]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["/.impeccable"]
+exclude = [
+    "/.impeccable",
+    "/.github/workflows/release.yml",
+    "/.github/workflows/release-validate.yml",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
