@@ -209,7 +209,35 @@ jobs:
         run: node scripts/release_npm.js candidate/agentbuildkit-0.0.3.tgz
       - name: Publish the validated tarball when it is absent
         if: steps.remote.outputs.decision == 'absent'
-        run: npm publish --provenance --access public candidate/agentbuildkit-0.0.3.tgz
+        run: |
+          tarball="${GITHUB_WORKSPACE}/candidate/agentbuildkit-0.0.3.tgz"
+          test -f "$tarball"
+          PYTHONPATH=. python - << 'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          tarball = Path(os.environ["GITHUB_WORKSPACE"]) / "candidate" / "agentbuildkit-0.0.3.tgz"
+          if not tarball.is_file():
+              raise SystemExit("The validated npm tarball is not a regular file.")
+          manifest = json.loads((tarball.parent / "manifest.json").read_text(encoding="utf-8"))
+          files = manifest.get("files")
+          if not isinstance(files, list):
+              raise SystemExit("The candidate manifest has no file list.")
+          expected = ""
+          for item in files:
+              if isinstance(item, dict) and item.get("name") == tarball.name:
+                  digest = item.get("sha256")
+                  if isinstance(digest, str):
+                      expected = digest
+          if not expected:
+              raise SystemExit("The candidate manifest has no npm tarball digest.")
+          actual = hashlib.sha256(tarball.read_bytes()).hexdigest()
+          if actual != expected:
+              raise SystemExit("The npm tarball does not match the validated digest.")
+          PY
+          npm publish --provenance --access public "$tarball"
 
   verify-npm:
     name: Verify the public npm install

@@ -176,3 +176,8 @@ def test_publish_workflow_reuses_the_validated_candidate() -> None:
     assert "npm pack" not in text
     assert "download-artifact" in text
     assert "is not an approval" in text
+    assert 'tarball="${GITHUB_WORKSPACE}/candidate/agentbuildkit-0.0.3.tgz"' in text
+    assert 'test -f "$tarball"' in text
+    assert 'npm publish --provenance --access public "$tarball"' in text
+    assert "npm publish --provenance --access public candidate/" not in text
+    assert "The npm tarball does not match the validated digest." in text
