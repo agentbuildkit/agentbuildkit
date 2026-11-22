@@ -77,10 +77,10 @@ templates, creates an inactive instance, edits the open draft with an expected
 version, validates it, and runs the scripted suite. It cannot activate,
 discard, or reset. Start it with an absolute `--state-directory`, then open
 that directory in the dashboard to activate. The command is documented in
-[MCP](mcp.md). It needs POSIX file locking. A locally built
-`agentbuildkit-templates` install provides it. The published 0.1.0 package
-and the published `npx agentbuildkit` 0.0.2 package do not. The upcoming
-0.2.0 commands are in [Install](install.md) and are not published yet.
+[MCP](mcp.md). It needs POSIX file locking. The published
+`agentbuildkit-templates` 0.2.0 package provides it. The older
+`agentbuildkit` 0.1.0 release and npm `agentbuildkit` 0.0.2 install the
+harness only. Current install commands are in [Install](install.md).
 
 The customer-service example loads its packaged `team.json` and resolves it
 through `definitions`. Typed models and prepared

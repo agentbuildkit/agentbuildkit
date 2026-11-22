@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose a change to the harness, a template, or the developer workflow.
+title: "Request: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the job the change would do. Planned work is not a commitment that it ships in the current release.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you cannot do with the published 0.2.0 harness and templates.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The behaviour you want, and how an offline test could show it.
+    validations:
+      required: true

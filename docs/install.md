@@ -1,16 +1,16 @@
 # Install
 
-The commands labelled **upcoming 0.2.0** are the release being prepared.
-They are not on PyPI or npm yet. The public index still has `agentbuildkit`
-0.1.0 and npm `agentbuildkit` 0.0.2. Those published packages install the
-harness only.
+The current public release is PyPI `agentbuildkit` 0.2.0, PyPI
+`agentbuildkit-templates` 0.2.0, and npm `agentbuildkit` 0.0.3.
 
 `agentbuildkit` 0.2.0 is the harness. `agentbuildkit-templates` 0.2.0 is the
 first-party package. Its import name is `agentbuildkit_templates`. The
 templates package requires `agentbuildkit>=0.2.0,<0.3.0`. Importing it also
 checks for packaged team JSON loading, the revision service, the POSIX
 startup lock error, the drafting server, and rendered dashboard pages. The
-published 0.1.0 harness does not provide those capabilities.
+older `agentbuildkit` 0.1.0 release remains on PyPI and does not provide
+those capabilities. npm `agentbuildkit` 0.0.2 remains available and installs
+the harness only.
 
 Composio and Microsoft Foundry stay optional extras of `agentbuildkit`. The
 bootstrapper and the default Python install do not install them.
@@ -20,10 +20,7 @@ startup fail with an actionable message on a platform without `fcntl`.
 Windows has not been verified. Other harness commands that do not open that
 lock are unchanged.
 
-## Upcoming 0.2.0 commands
-
-These commands apply after publication. They do not work against today's
-public index.
+## Current install
 
 Default npm installation and dashboard launch:
 
@@ -36,7 +33,7 @@ dashboard, and then offers the offline demo. The dashboard stays in that
 terminal. Press Ctrl+C to stop it. Neither step calls a model. A
 non-interactive run prints that it skipped both and does not wait.
 
-Python installation of the full local product, after publication:
+Python installation of the harness and the templates:
 
 ```bash
 uv tool install --python 3.12 --managed-python \
@@ -67,8 +64,8 @@ agentkit mcp serve --state-directory /ABSOLUTE/PATH/agentbuildkit-state
 
 MCP requires an absolute path and does not read `APP_STATE_DIRECTORY`.
 
-Upgrading a harness-only installation. The upcoming npm package detects a
-tool install that does not report the templates package and reinstalls both:
+Upgrading a harness-only installation. npm 0.0.3 detects a tool install that
+does not report the templates package and reinstalls both:
 
 ```bash
 npx agentbuildkit@0.0.3
@@ -187,13 +184,14 @@ entry. See [MCP](mcp.md). Claude Desktop was not tested.
 
 ## npm bootstrapper
 
-The published `npx agentbuildkit` package is 0.0.2. It installs the harness
-only. The upcoming 0.0.3 package installs `agentbuildkit>=0.2.0,<0.3.0` and
-`agentbuildkit-templates>=0.2.0,<0.3.0`, runs `agentkit doctor`, explains the
-state directory, and can open the dashboard in the foreground. It does not
-install Composio or Foundry and it does not start a live model call.
+`npx agentbuildkit` resolves to npm 0.0.3. It installs
+`agentbuildkit>=0.2.0,<0.3.0` and `agentbuildkit-templates>=0.2.0,<0.3.0`,
+runs `agentkit doctor`, explains the state directory, and can open the
+dashboard in the foreground. It does not install Composio or Foundry and it
+does not start a live model call. npm 0.0.2 remains the older harness-only
+bootstrapper.
 
-From this repository, before publication:
+From this repository:
 
 ```bash
 node npm/agentbuildkit/bin/agentbuildkit.js --source local --no-demo --no-dashboard

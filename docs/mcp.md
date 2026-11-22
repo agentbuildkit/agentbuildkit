@@ -19,16 +19,15 @@ Dashboard and MCP startup fail with an actionable message when `fcntl` is
 unavailable. Windows has not been verified. Harness commands that do not open
 that lock are unchanged.
 
-The published `agentbuildkit` 0.1.0 package and the published
-`npx agentbuildkit` 0.0.2 package do not include `agentkit mcp` or the
-templates. The upcoming 0.2.0 commands in [Install](install.md) are not on
-the public index yet. A checkout command uses this repository. An installed
-command uses wheels built from this repository.
+`agentkit mcp` is included in the published `agentbuildkit` 0.2.0 and
+`agentbuildkit-templates` 0.2.0 pair. npm `agentbuildkit` 0.0.3 installs that
+pair. The older `agentbuildkit` 0.1.0 release and npm `agentbuildkit` 0.0.2
+install the harness only. A checkout command uses this repository. An
+installed command uses the published packages. See [Install](install.md).
 
 ## Launch
 
-From a locally built install, with an absolute directory you choose. This is
-not a PyPI or `npx` command until a later release:
+From the published install, with an absolute directory you choose:
 
 ```bash
 agentkit mcp serve --state-directory /tmp/agentbuildkit-drafts

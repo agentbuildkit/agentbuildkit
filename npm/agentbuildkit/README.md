@@ -1,16 +1,16 @@
 # agentbuildkit
 
-Bootstrapper for [AgentBuildKit](https://agentbuildkit.com), a Python harness for reliable agents.
+Bootstrapper for [AgentBuildKit](https://agentbuildkit.com).
 
-The published package is npm 0.0.2. It installs the Python harness only.
-This checkout is npm 0.0.3 and is not published yet. After publication, the
-upcoming command is:
+**Build Agents You Trust**
+
+AgentBuildKit is an open-source harness for building, running and governing AI agent teams. This package is the Node installer. The harness and the templates are Python.
+
+The current published release is npm `agentbuildkit` 0.0.3. It installs PyPI `agentbuildkit` 0.2.0 and `agentbuildkit-templates` 0.2.0. npm `0.0.2` remains available and installs the harness only.
 
 ```bash
-npx agentbuildkit@0.0.3
+npx agentbuildkit
 ```
-
-This package is Node. AgentBuildKit itself is Python. The 0.0.3 bootstrapper uses [uv](https://docs.astral.sh/uv/) to install `agentbuildkit>=0.2.0,<0.3.0` and `agentbuildkit-templates>=0.2.0,<0.3.0` into an isolated tool environment. It does not install Composio or Foundry.
 
 Source and issues: [github.com/agentbuildkit/agentbuildkit](https://github.com/agentbuildkit/agentbuildkit)
 
@@ -20,16 +20,16 @@ Source and issues: [github.com/agentbuildkit/agentbuildkit](https://github.com/a
 - Python 3.12, which uv can install
 - macOS (Apple Silicon or Intel) or Linux (x64 or arm64)
 
-The bootstrapper does not change system Python and does not ask for API keys. `agentkit demo` is offline and does not need an OpenAI or Anthropic key. Opening the dashboard does not call a model.
+The bootstrapper does not change system Python and does not ask for API keys. `agentkit demo` is offline. Opening the dashboard does not call a model.
 
-Dashboard and MCP startup need POSIX `flock`. They fail with an install or platform message when that lock is unavailable. Windows has not been verified.
+Dashboard and MCP startup need POSIX `flock`. They fail with a platform message when that lock is unavailable. Windows has not been verified.
 
-## What the upcoming 0.0.3 command does
+## What `npx agentbuildkit` does
 
 1. Checks the operating system and the Node.js version.
 2. Uses `uv` when it is already installed.
 3. If `uv` is missing, an interactive terminal asks before running Astral's official installer. A non-interactive run does not download `uv` unless you pass `--install-uv`.
-4. Installs the harness and the first-party templates with `uv tool install`. A harness-only tool install is upgraded instead of being reported as ready.
+4. Installs `agentbuildkit>=0.2.0,<0.3.0` and `agentbuildkit-templates>=0.2.0,<0.3.0` with `uv tool install`. A harness-only tool install is upgraded.
 5. Runs `agentkit doctor`.
 6. Explains the state directory. A `--state-directory` path is kept. Without it, a `.env` file in the current directory wins over the shell. With none of those, dashboard state lasts until the process stops.
 7. In an interactive terminal, offers the local dashboard. It runs in the foreground. Press Ctrl+C to stop it.
@@ -37,7 +37,7 @@ Dashboard and MCP startup need POSIX `flock`. They fail with an install or platf
 
 A non-interactive run says that it skipped the dashboard and the demo. It does not wait and it does not start either one.
 
-`--no-demo` skips the demo. `--no-dashboard` skips the dashboard. `--upgrade` reinstalls both packages. `--state-directory` is passed to the dashboard when you accept it.
+`--no-demo` skips the demo. `--no-dashboard` skips the dashboard. `--upgrade` reinstalls both packages. `--state-directory` is passed to the dashboard when you accept it. Composio and Foundry stay optional and are not installed by this command.
 
 From a clone of the repository, `--source local` installs that checkout and `examples/`:
 
@@ -46,6 +46,8 @@ node npm/agentbuildkit/bin/agentbuildkit.js --source local --no-demo --no-dashbo
 ```
 
 `AGENTBUILDKIT_SOURCE` accepts the same values as `--source`.
+
+The published 0.0.3 package prints the previous tagline in `--help`, together with a sentence written before publication. The installer behaviour above is the behaviour of that published package.
 
 ## After installation
 

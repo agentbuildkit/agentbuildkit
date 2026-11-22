@@ -1,139 +1,150 @@
 # AgentBuildKit
 
-**Build agents. Not demos.**
+**Build Agents You Trust**
 
-AgentBuildKit is the production layer around your agent framework.
+AgentBuildKit is an open-source, model-agnostic agent framework harness for building, running and governing AI agent teams.
 
-A model alone is not an agent. AgentBuildKit is the harness that turns a model into something you can route, constrain, approve, audit, and evaluate.
-
-**Model + Harness = Agent**
-
-It currently builds on Microsoft Agent Framework. Each agent declares its own provider and model. OpenAI and Anthropic are the built-in providers, and one workflow can mix them. Deterministic Python owns routing, tool permission, and whether a side effect may run.
-
-## What it adds
-
-- **Models.** Per-agent provider and model selection.
-- **Agents.** Typed inputs and outputs.
-- **Tools.** An allowlist on each agent. Reads can run. Side effects wait.
-- **Workflows.** Deterministic routing across agents.
-- **Guardrails and human approval.** A side effect pauses until a person decides.
-- **State and audit.** SQLite pause and resume, idempotent side effects, and an audit trail that records the provider and model.
-- **Evaluation.** The same run can be checked against expectations.
+A model call returns text. A governed workflow decides who may act, which tools are allowed, when a person must approve a side effect, what is recorded, and how the same run can be repeated offline. AgentBuildKit is that harness. It uses Microsoft Agent Framework as its runtime. OpenAI and Anthropic are the built-in providers, and one team can use both.
 
 ## Quick start
 
-### Upcoming 0.2.0 install
-
-These commands are not on the public index yet. Today's `npx agentbuildkit` is npm 0.0.2 and installs the harness only.
-
 ```bash
-npx agentbuildkit@0.0.3
+npx agentbuildkit
 ```
 
-The upcoming bootstrapper installs `agentbuildkit>=0.2.0,<0.3.0` and `agentbuildkit-templates>=0.2.0,<0.3.0`, runs `agentkit doctor`, explains the state directory, and can open the local dashboard. Press Ctrl+C to stop the dashboard. It does not call a model. See [Install](docs/install.md).
+That command installs the published harness, `agentbuildkit` 0.2.0, and the first-party templates, `agentbuildkit-templates` 0.2.0. It then runs `agentkit doctor`. In an interactive terminal it explains where state is stored, asks whether to open the local dashboard, and asks whether to run the offline demo.
 
-### Development install
+You need Node.js 18 or newer, on macOS or Linux. The installer uses [uv](https://docs.astral.sh/uv/) to provide Python 3.12 in an isolated tool environment. It does not change the system Python and it does not ask for an API key. If `uv` is missing, an interactive terminal asks before running Astral's installer. A non-interactive run installs `uv` only when you pass `--install-uv`.
 
-From a clone of this repository:
+Useful flags:
 
 ```bash
-node npm/agentbuildkit/bin/agentbuildkit.js --source local
+npx agentbuildkit --no-demo --no-dashboard
+npx agentbuildkit --state-directory /ABSOLUTE/PATH/agentbuildkit-state
 ```
 
-That installs this checkout into an isolated uv tool environment. `--upgrade` reinstalls it. `--no-demo` skips the demo prompt. If `uv` is missing, an interactive terminal asks before running Astral's installer. A non-interactive run installs uv only when you pass `--install-uv`.
+Press Ctrl+C to stop the dashboard. A non-interactive run installs the tools, prints that it skipped the dashboard and the demo, and exits.
 
-To work on the Python package directly:
+The same pair can be installed with Python:
 
 ```bash
-uv sync
-uv run agentkit demo
+uv tool install --python 3.12 --managed-python \
+  --with "agentbuildkit-templates>=0.2.0,<0.3.0" \
+  "agentbuildkit>=0.2.0,<0.3.0"
 ```
 
-Python 3.12 is required. uv manages that interpreter. The bootstrapper does not change the system Python.
+Older releases remain available. PyPI `agentbuildkit` 0.1.0 and npm `agentbuildkit` 0.0.2 install the harness only. Details, upgrades, and checkout installs are in [Install](docs/install.md).
 
-### Commands
+## Why AgentBuildKit?
+
+A prompt can ask a model to call a tool. It cannot, by itself, keep that call inside an allowlist, pause a write for a person, or show the same decision after a restart.
+
+AgentBuildKit puts those boundaries in ordinary Python:
+
+- **Tool execution boundaries.** Each agent receives only the tools named on its allowlist. A read may run. A side effect waits.
+- **Human approval.** A side effect pauses until a person approves or rejects it. Approval runs that action at most once inside the local store.
+- **Auditability.** The audit trail records the agent, provider, model, tool, and decision. It stores argument hashes, not argument values or secrets.
+- **Repeatability.** The offline demo and the template evaluation suites run with scripted replies. The same expectations can be checked without a live model.
+- **Provider flexibility.** Each agent declares its provider and model. OpenAI and Anthropic can appear in one workflow. The workflow does not branch on the provider.
+
+## How it works
+
+```text
+Model → Agent → Tools → Workflow → Approval → State/Audit → Evaluation
+```
+
+The model supplies judgment and language. Python owns the rest. It checks the typed input and output, admits only allowlisted tools, chooses the next step from an allowlisted route, and refuses a side effect until an approval decision matches that action. The provider and model are fields on the agent. Callers can inject a scripted client, which is what the offline demo and the evaluation suites use.
+
+```text
+alex    → one provider and model
+taylor  → another provider and model
+jordan  → another provider and model
+```
+
+Those names are the offline demo. They are not a required team shape. See [Architecture](docs/architecture.md).
+
+## What is included?
+
+Version 0.2.0 includes:
+
+- The `agentbuildkit` harness and the `agentkit` command.
+- Typed agent inputs and outputs, per-agent provider and model, and deterministic workflow routing.
+- Tool allowlists, human approval, SQLite pause and resume, and an audit ledger.
+- Offline evaluation.
+- Two installable templates in `agentbuildkit-templates`: Customer Service and Operations Reporting.
+- A local dashboard for one operator, including drafts, runs, approvals, and the audit log.
+- A local stdio MCP server for drafting an inactive team.
+- Optional extras for Microsoft Foundry and for a read-only Google Sheets connection through Composio.
+
+Skills, persistent agent memory, a template store, and hosted multi-user deployment are outside this release. The dashboard is a local operator interface. It is not a no-code builder and it does not certify a deployment.
+
+## Run the offline demo
 
 ```bash
-agentkit version
-agentkit doctor
 agentkit demo
+agentkit demo --approve
+agentkit demo --reject
 ```
 
-`agentkit doctor` checks the installation. Missing OpenAI or Anthropic credentials are reported and are not a failure.
+`agentkit demo` needs no API key and does not call OpenAI or Anthropic. It runs a loading-bay request through the harness: the orchestrator selects the service route, the specialist reads an allowed tool, an unlisted tool is rejected, a side effect pauses, a person approves or rejects it, a reviewer checks the outcome, and the evaluation reads the audit trail. `--approve` and `--reject` supply that decision without a prompt.
 
-`agentkit demo` is offline. It needs no API key and it does not call a model provider. It shows the harness: an agent routes the request, a specialist reads an allowed tool, an unauthorised tool is rejected, a side effect pauses for approval, the run resumes after that decision, a reviewer checks the result, and the evaluation passes or fails from the audit trail.
+From a clone, the same demo is `uv run agentkit demo --approve`.
 
-`agentkit demo --approve` and `agentkit demo --reject` make that decision without a prompt.
+## Local dashboard
 
-## Architecture
-
-```text
-Model
-  ↓
-Agent                 provider and model belong to that agent
-  ↓
-Tools                 allowlist; reads run, side effects wait
-  ↓
-Workflow              deterministic routing
-  ↓
-Guardrails / approval human decision before a side effect
-  ↓
-State / audit         SQLite pause, resume, and audit events
-  ↓
-Evaluation            expectations checked against the trace
-```
-
-A workflow can mix providers:
-
-```text
-alex    → OpenAI / one model
-taylor  → OpenAI / another model
-jordan  → Anthropic / another model
-```
-
-The names above are the offline demo's agents. The provider and model are fields on each agent definition. The workflow that receives the clients does not branch on the provider. The offline demo uses scripted clients, so those calls are not OpenAI or Anthropic requests.
-
-## The offline demo
-
-The demo is a loading-bay request: book a technician for tomorrow.
-
-1. Alex, the orchestrator, chooses the `service` route.
-2. Taylor, the service specialist, calls `read_ticket`. That read is allowed.
-3. `cancel_ticket` is not on Taylor's allowlist, so it is rejected.
-4. `schedule_visit` is a side effect. The run pauses and stores the approval in SQLite.
-5. A person approves or rejects it. Approval runs the visit once. Rejection does not.
-6. Jordan reviews the outcome.
-7. The evaluation checks the trace, including the route, the rejected tool, the approval, and the audit record.
-
-That is the production harness running locally, with the model text supplied by a script.
-
-## Current scope
-
-This release includes the Python package `agentbuildkit`, the `agentkit` command, and the Node bootstrapper in `npm/agentbuildkit`. Microsoft Foundry is an optional extra and is not installed by a normal sync.
-
-Skills and persistent agent memory are not in this release. The harness loads declarative team bundles. One local dashboard installs Customer Service and Operations Reporting, and Create team can add another inactive instance of either template. Each instance keeps its own runs, approvals, audit, revisions, and spreadsheet window. A new instance cannot run until its draft is validated, evaluated offline, and activated. Set `APP_STATE_DIRECTORY` to keep instances and drafts in `revisions.sqlite`. When that name is in `.env`, it overrides the shell. Use `--state-directory` to choose a different directory for one process. The scripted check does not measure a live model or account readiness. Google Sheets stays optional, and the key stays on the server.
-
-`examples/agentbuildkit_templates/customer_service` is a separate example with fixture data. It is not the offline demo. It is packaged as `agentbuildkit-templates`, not copied into the harness. See [Install](docs/install.md).
-
-A local install of that templates package serves drafts over stdio MCP and starts the dashboard. `agentkit mcp serve` requires an absolute `--state-directory` and does not read `APP_STATE_DIRECTORY`. `agentkit dashboard --state-directory` selects one process directory and overrides `.env`. Without that flag, a `.env` file in the current directory wins over the shell. The startup lock is POSIX `flock`. The published `agentbuildkit` 0.1.0 package and the published `npx agentbuildkit` 0.0.2 package do not include the templates. The upcoming 0.2.0 commands are in [Install](docs/install.md) and are not published yet. See [MCP](docs/mcp.md).
-
-Further detail is in [docs/architecture.md](docs/architecture.md).
-
-## Development checks
+After installation:
 
 ```bash
-uv run ruff check .
-uv run ruff format --check .
-uv run pyright
-uv run pytest
+agentkit dashboard --state-directory /ABSOLUTE/PATH/agentbuildkit-state
 ```
 
-Bootstrapper tests, from `npm/agentbuildkit`:
+The process binds to `127.0.0.1` and prints the URL, including the port chosen for that process. It has no login. Leave it in the foreground and press Ctrl+C to stop it. Opening the dashboard does not call a model.
 
-```bash
-npm test
-```
+State for that process lives in the directory you pass. The files include workflow checkpoints, `revisions.sqlite` for installed teams and drafts, recovery records, and optional connection records. `--state-directory` overrides `.env` and the shell. Without the flag, `APP_STATE_DIRECTORY` in a `.env` file in the current directory wins over the shell. With none of those, dashboard state lasts until the process stops.
 
-## License
+Customer Service is served at `/teams/customer-service/` and Operations Reporting at `/teams/operations-reporting/`. Create team adds another inactive instance of one of those two templates. The instance can take a request after its draft is validated, evaluated offline, and activated. The scripted evaluation does not measure a live model.
+
+Dashboard and MCP startup use POSIX `flock`. They stop with an actionable message when that lock is unavailable. Windows has not been verified for those commands.
+
+## Agent teams and templates
+
+`agentbuildkit-templates` 0.2.0 installs two templates:
+
+- **Customer Service.** Alex classifies a request. Python routes it to Sam or Taylor. Jordan reviews the result. A service change pauses for approval. The business data in the demo is a fixture: reference `A-100`, account Northwind.
+- **Operations Reporting.** An analyst reads jobs and a reviewer checks that the summary names only those job ids. This team has no approval actions. The demo fixture uses job ids `J-100`, `J-200`, and `J-300`.
+
+A new instance starts inactive, with no copied connections. Editing a draft does not activate it. These are the only registered templates. The package does not install a commercial bundle or a generated workflow. See [Team bundles](docs/team-bundles.md).
+
+## Providers and integrations
+
+Set a provider key only when a live agent uses that provider. `agentkit doctor` reports a missing OpenAI or Anthropic key and still succeeds.
+
+- `OPENAI_API_KEY` for an OpenAI agent. The Customer Service defaults use OpenAI.
+- `ANTHROPIC_API_KEY` for an Anthropic agent.
+- Microsoft Foundry is the optional `foundry` extra. The default install leaves it out.
+- Composio is the optional `composio` extra. It can connect one read-only Google Sheets window. The default install leaves it out. Disconnect removes the local assignment and does not revoke Google access.
+- The harness can govern allowlisted GitHub operations and one Cursor execution grant. Credentials stay in configuration. See [Architecture](docs/architecture.md).
+
+## Security and governance
+
+Side effects require an allowlisted tool and a human decision before they run. Approval inside the local store is at most once for that idempotency key. It is not exactly-once delivery to an external system. Unknown routes fail closed. Secrets stay in the environment or a local `.env`, which is not part of the package. Audit events and checkpoints omit prompts, raw arguments, and credentials.
+
+These controls are the implemented behaviour of this release. They are not a certification, and they do not make every deployment secure. Private vulnerability reports go through [Security](.github/SECURITY.md).
+
+## Documentation
+
+- [Install](docs/install.md)
+- [Architecture](docs/architecture.md)
+- [MCP drafting](docs/mcp.md)
+- [Team bundles](docs/team-bundles.md)
+- [0.2.0 release notes](docs/releases/0.2.0.md)
+- [Deployment checklist](docs/deployment.md)
+- [Contributing](CONTRIBUTING.md)
+
+## Contributing
+
+Clone the repository, install the development environment with `uv sync`, and run the checks in [Contributing](CONTRIBUTING.md). Python 3.12 is required. Pull requests need an offline test for new behaviour. Live provider tests use `@pytest.mark.integration`. Do not commit `.env` or credentials.
+
+## Licence
 
 Apache License 2.0. See [LICENSE](LICENSE).

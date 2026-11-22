@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a defect in the published harness, templates, dashboard, or installer.
+title: "Bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe what the released software did. Leave out credentials, customer data, and private prompts.
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `agentkit version`, plus the npm version if you used `npx agentbuildkit`.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What happened
+      description: The command you ran, what you expected, and what you observed.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Installer
+        - Offline demo
+        - Dashboard
+        - Templates
+        - MCP drafting
+        - Providers
+        - Other
+    validations:
+      required: true

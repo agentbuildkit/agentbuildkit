@@ -20,9 +20,9 @@ Model + Harness = Agent. Deterministic Python owns routing, tool permission and 
 
 ## Operating Context
 
-- Install with `npx agentbuildkit` (installs the Python CLI with uv, then runs `agentkit doctor`) or `uv sync` from a clone. Python 3.12.
+- Install with `npx agentbuildkit` (installs `agentbuildkit` 0.2.0 and `agentbuildkit-templates` 0.2.0 with uv, then runs `agentkit doctor`) or `uv sync` from a clone. Python 3.12. The dashboard opened by `agentkit dashboard` binds to `127.0.0.1` and prints the assigned port. The checkout command `python -m customer_service.dashboard` defaults to `127.0.0.1:8765`.
 - `agentkit demo` is offline: scripted model replies, no API key, no provider calls.
-- `examples/agentbuildkit_templates/customer_service` is a separate four-agent example (Alex manager, Sam and Taylor specialists, Jordan reviewer) over fixture data. It has a local dashboard served by the Python standard library at `127.0.0.1:8765`.
+- `examples/agentbuildkit_templates/customer_service` is a separate four-agent example (Alex manager, Sam and Taylor specialists, Jordan reviewer) over fixture data. The local dashboard is served by the Python standard library.
 - A live run of the example needs `OPENAI_API_KEY`. `APP_STATE_DIRECTORY` makes pending approvals, outcomes and the audit ledger survive a restart; without it state is in memory only.
 - Team bundles are JSON (`team.json`) validated with `agentkit team validate`.
 
@@ -41,7 +41,7 @@ Model + Harness = Agent. Deterministic Python owns routing, tool permission and 
 ## Brand Commitments
 
 - Name: AgentBuildKit. Open source under Apache 2.0. The project author is AgentBuildKit.
-- Current headline on agentbuildkit.com: "Build agents you trust". The README still uses "Build agents. Not demos."
+- Official tagline: "Build Agents You Trust".
 - Logo: the "Courses" mark, an A built from stacked courses with the Signal Blue crossbar. Logo kit and usage guide are in the AgentBuildKit project files.
 - The dashboard follows the website palette: Ice White #F5F7FA background, Soft Slate Blue #EBF0F5 surfaces, Ink #0F141C text, Muted Blue-Gray #5C6B7A secondary text, Brand Blue #2B4CF2 primary, Deep Charcoal #111111 secondary. Warm cream backgrounds were rejected as looking AI-generated.
 - Voice: plain and factual. Lead with what ships today; say what something does not do.
@@ -50,7 +50,7 @@ Model + Harness = Agent. Deterministic Python owns routing, tool permission and 
 
 - Offline demo (`agentkit demo`) and the customer-service example with its dashboard.
 - 13 scripted evaluation scenarios in `examples/agentbuildkit_templates/customer_service/evaluation.py`, plus the unit test suite under `tests/unit`.
-- v0.1.0 is the published PyPI release. npm `agentbuildkit` 0.0.2 is the published bootstrapper and installs the harness only. The 0.2.0 Python packages and npm 0.0.3 are prepared in this repository and are not published yet.
+- Published releases: PyPI `agentbuildkit` 0.2.0, PyPI `agentbuildkit-templates` 0.2.0, and npm `agentbuildkit` 0.0.3. PyPI `agentbuildkit` 0.1.0 and npm `agentbuildkit` 0.0.2 remain available and install the harness only.
 - Fixture data only: reference A-100, account name Northwind, mock business API at `http://business.test`.
 - Absent, and must not be fabricated: customers, testimonials, case studies, benchmarks, production deployments, live CRM integrations, token costs or timings the backend does not record.
 

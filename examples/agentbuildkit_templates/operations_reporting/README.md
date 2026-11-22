@@ -15,6 +15,6 @@ The dashboard command is the same local server:
 PYTHONPATH=examples uv run python -m customer_service.dashboard
 ```
 
-That is the checkout wrapper. An installed templates package uses `agentkit dashboard`. See [Install](../../docs/install.md).
+That is the checkout wrapper. An installed templates package uses `agentkit dashboard`. See [Install](../../../docs/install.md).
 
 Open Customer Service at `/teams/customer-service/` and Operations Reporting at `/teams/operations-reporting/`. This is one local operator. Team isolation is not hosted multi-user tenancy. The server opens its SQLite files on one owner thread.

@@ -1,6 +1,6 @@
 # Contributing
 
-AgentBuildKit is a Python 3.12 project. [uv](https://docs.astral.sh/uv/) installs the interpreter and the dependencies.
+AgentBuildKit is a Python 3.12 project. The published install is `npx agentbuildkit`. [uv](https://docs.astral.sh/uv/) installs the interpreter and the dependencies for development.
 
 ```bash
 uv sync

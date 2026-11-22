@@ -1,19 +1,18 @@
 # Changelog
 
-## npm 0.0.2
-
-- The bootstrapper stops reading the terminal before `agentkit demo`. An approval entered after a fresh install reaches the Python CLI.
-
-## 0.2.0 (prepared, not published)
-
-- Python packages `agentbuildkit` 0.2.0 and `agentbuildkit-templates` 0.2.0. The templates package requires `agentbuildkit>=0.2.0,<0.3.0` and still checks the harness capabilities. The published 0.1.0 harness does not satisfy that requirement.
-- npm bootstrapper 0.0.3 installs both packages, runs diagnostics, explains the state directory, and can open the dashboard in the foreground. A harness-only tool install is upgraded. Composio and Foundry stay optional. This npm version is not published yet. The published npm package remains 0.0.2.
-- Release validation builds the candidate once. Publication reuses that candidate and does not run from a branch push, pull request, merge, or GitHub Release.
-- Release notes and the publication checklist are in `docs/releases/`.
-
 ## Unreleased
 
-- `agentbuildkit-templates` packages Customer Service and Operations Reporting separately from the harness, under the import name `agentbuildkit_templates`. The templates dependency is `agentbuildkit>=0.2.0,<0.3.0`. Importing the package still checks for harness capabilities that the published `agentbuildkit` 0.1.0 package does not provide, and stops when they are missing. `agentkit dashboard` and `agentkit mcp serve` import that package by name. A locally built install can run version, doctor, the offline demo, the dashboard, and drafting without a checkout or `PYTHONPATH`. The dashboard does not construct a live provider or Composio client at startup. A live run fails clearly when the credential is missing. The revision startup lock still requires POSIX `flock` and reports that limit on other platforms. The published `agentbuildkit` 0.1.0 package and the published `npx agentbuildkit` package do not include the templates. A passing scripted suite does not prove live readiness.
+No product changes since the published 0.2.0 release.
+
+## 0.2.0
+
+Published on 22 November 2026.
+
+- PyPI `agentbuildkit` 0.2.0 and `agentbuildkit-templates` 0.2.0. The templates package requires `agentbuildkit>=0.2.0,<0.3.0` and checks the harness capabilities. The older `agentbuildkit` 0.1.0 release does not satisfy that requirement.
+- npm `agentbuildkit` 0.0.3 installs both packages, runs diagnostics, explains the state directory, and can open the dashboard in the foreground. A harness-only tool install is upgraded. Composio and Foundry stay optional. npm `0.0.2` remains available and installs the harness only.
+- Release validation builds the candidate once. Publication reuses that candidate and does not run from a branch push, pull request, merge, or GitHub Release.
+- Release notes and the publication checklist are in `docs/releases/`.
+- `agentbuildkit-templates` packages Customer Service and Operations Reporting separately from the harness, under the import name `agentbuildkit_templates`. Importing the package checks for harness capabilities that `agentbuildkit` 0.1.0 does not provide, and stops when they are missing. `agentkit dashboard` and `agentkit mcp serve` import that package by name. An installed pair can run version, doctor, the offline demo, the dashboard, and drafting without a checkout or `PYTHONPATH`. The dashboard does not construct a live provider or Composio client at startup. A live run fails clearly when the credential is missing. The revision startup lock requires POSIX `flock` and reports that limit on other platforms. A passing scripted suite does not prove live readiness.
 - A repository checkout can serve local stdio MCP tools for drafting an inactive team, validating the exact draft, and running its scripted evaluation. The server uses the revision service, requires an absolute `--state-directory`, and uses POSIX file locking. It does not read `APP_STATE_DIRECTORY` or provider credentials. It does not activate, roll back, run, approve, or connect.
 - A local operator can create another inactive instance of Customer Service or Operations Reporting. The installed team id is separate from the template id and the display name. Creation does not copy connections or activate a revision. The same idempotency key with the same normalized name, description, template, and team id returns that team and does not open another draft. A different name, description, template, or team id for that key is a conflict and leaves the original team unchanged. The team can run only after validation, offline evaluation, and explicit activation. Two instances of the same template keep separate runs, approvals, revisions, and spreadsheet windows. Installed teams are stored in `revisions.sqlite`. A version 1 file is backed up and opened as version 2. An unsupported file is left unchanged. `python -m customer_service.dashboard --state-directory PATH` opens that directory for one process. A value in `.env` still overrides a shell assignment of `APP_STATE_DIRECTORY`.
 - A local operator can edit the active revision of Customer Service or Operations Reporting. The draft copies that revision. Resetting from the shipped template is a separate action and shows the difference. Validation and a scripted offline suite are bound to that exact revision. The suite does not measure a live model or prove that changed instructions are effective. Activation checks the current template again and does not publish a draft that no longer matches. Rollback is explicit and is refused when the old revision no longer matches the template. The revision is stored before a run starts, and a pending approval keeps it across a restart. This does not install another team. Drafts stay in `revisions.sqlite` when `APP_STATE_DIRECTORY` is set, and in memory otherwise. Existing workflow, recovery, and connection databases are not migrated. An unsupported revision database is left unchanged.
