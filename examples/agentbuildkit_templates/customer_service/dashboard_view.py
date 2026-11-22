@@ -4,9 +4,11 @@ The pages read a ``Snapshot`` built by ``DashboardService``. Forms post to the
 existing ``/run``, ``/decide`` and ``/evaluate`` handlers.
 """
 
+import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from html import escape
 
 from agentbuildkit.evaluation import EvaluationReport
@@ -194,6 +196,8 @@ _ICONS = {
         '<path d="M5 2.5v3.5h6V2.5M5 13.5V9.5h6v4"/>'
     ),
     "close": '<path d="m4 4 8 8M12 4l-8 8"/>',
+    "search": '<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/>',
+    "spark": '<path d="M8 2v3M8 11v3M2 8h3M11 8h3M4 4l2 2M10 10l2 2M12 4l-2 2M6 10l-2 2"/>',
 }
 
 _LOGO = (
@@ -203,6 +207,51 @@ _LOGO = (
     'M24 232 L78 232 L93.35 190 L39.35 190 Z M216.65 190 L162.65 190 L178 232 L232 232 Z"/>'
     '<path fill="#2B4CF2" d="M159 180 L213 180 L200.58 146 L55.42 146 L43 180 L97 180 Z"/></svg>'
 )
+
+
+_LOGO_LIGHT = (
+    '<svg width="20" height="20" viewBox="0 0 256 256" aria-hidden="true">'
+    '<path fill="#FFFFFF" fill-rule="evenodd" d="M78.08 84 L177.92 84 L156 24 L100 24 Z '
+    "M59.08 136 L113.08 136 L128 95.16 L142.92 136 L196.92 136 L181.58 94 L74.42 94 Z "
+    "M24 232 L78 232 L93.35 190 L39.35 190 Z M216.65 190 L162.65 190 L178 232 L232 232 Z "
+    'M159 180 L213 180 L200.58 146 L55.42 146 L43 180 L97 180 Z"/></svg>'
+)
+# Each agent keeps one colour across the dashboard. None of them is a status colour.
+_AGENT_TONES = ("a", "b", "c", "d", "e")
+
+
+def agent_tone(snap: "Snapshot", name: str) -> str:
+    """A stable colour slot for an agent, by its position in the team."""
+    names = [agent.name for agent in snap.agents]
+    if name in names:
+        return _AGENT_TONES[names.index(name) % len(_AGENT_TONES)]
+    return "n"
+
+
+def avatar(snap: "Snapshot", name: str, *, size: str = "") -> str:
+    if not name:
+        return f'<span class="avatar tone-n {size}" aria-hidden="true">&#8211;</span>'
+    tone = agent_tone(snap, name)
+    return (
+        f'<span class="avatar tone-{tone} {size}" aria-hidden="true">{e(name[:1].upper())}</span>'
+    )
+
+
+def ring(value: int, total: int, label: str, tone: str) -> str:
+    """A ring gauge for value of total. With no total it shows an empty ring."""
+    radius = 34
+    length = 2 * math.pi * radius
+    share = value / total if total else 0.0
+    dash = length * share
+    shown = f"{round(share * 100)}%" if total else "&#8211;"
+    return f"""<div class="ring tone-{tone}" role="img" aria-label="{e(label)}: {value} of {total}">
+  <svg width="84" height="84" viewBox="0 0 84 84" aria-hidden="true">
+    <circle class="ring-track" cx="42" cy="42" r="{radius}" fill="none" stroke-width="8"/>
+    <circle class="ring-fill" cx="42" cy="42" r="{radius}" fill="none" stroke-width="8"
+stroke-linecap="round" stroke-dasharray="{dash:.1f} {length:.1f}" transform="rotate(-90 42 42)"/>
+  </svg>
+  <span class="ring-val" aria-hidden="true"><b>{shown}</b><small>{e(label)}</small></span>
+</div>"""
 
 
 def icon(name: str, size: int = 16, extra: str = "") -> str:
@@ -264,8 +313,10 @@ _NAV: tuple[tuple[str, str, str], ...] = (
 
 
 def _switcher(snap: Snapshot) -> str:
+    """The team crumb. With several installed teams it opens a list of them."""
+    shown = e(snap.title or snap.team_name)
     if not snap.installed:
-        return ""
+        return f'<span class="crumbs">AgentBuildKit<span class="sep">/</span><b>{shown}</b></span>'
     labels = dict(snap.activity)
     links: list[str] = []
     for team_id, title in snap.installed:
@@ -273,9 +324,12 @@ def _switcher(snap: Snapshot) -> str:
         tag = '<span class="tag">Draft</span>' if labels.get(team_id) == "Draft" else ""
         links.append(f'<a href="/teams/{e(team_id)}/"{current}>{e(title)}{tag}</a>')
     links.append('<a href="/teams/new">Create team</a>')
-    return f"""<nav class="teams" aria-label="Installed teams">{"".join(links)}
+    return f"""<details class="crumbs teams">
+  <summary>AgentBuildKit<span class="sep">/</span><b>{shown}</b>{icon("chev", 12, "chev")}</summary>
+  <nav class="teams-menu" aria-label="Installed teams">{"".join(links)}
 <p class="xs">One local operator. Each team keeps its own runs, approvals, and spreadsheet
-window.</p></nav>"""
+window.</p></nav>
+</details>"""
 
 
 def _sidebar(snap: Snapshot, current: str) -> str:
@@ -283,32 +337,50 @@ def _sidebar(snap: Snapshot, current: str) -> str:
     for label, name, href in _NAV:
         mark = ' aria-current="page"' if label == current else ""
         count = ""
+        aria = label
         if label == "Approvals" and snap.approvals:
             n = len(snap.approvals)
-            count = f'<span class="count" aria-label="{n} waiting">{n}</span>'
-        links.append(f'<a href="{loc(snap, href)}"{mark}>{icon(name)}{label}{count}</a>')
-    providers = sorted({agent.provider for agent in snap.agents})
-    provider_text = ", ".join(p.title() if p != "openai" else "OpenAI" for p in providers)
-    if snap.persistent:
-        storage = (
-            f'<span class="row">{icon("disk", 15)}Saved to disk</span>'
-            "<span>Approvals reopen after a restart.</span>"
+            count = f'<span class="rail-count" aria-hidden="true">{n}</span>'
+            aria = f"{label}, {n} waiting"
+        links.append(
+            f'<a href="{loc(snap, href)}" aria-label="{aria}"{mark}>{icon(name, 18)}{count}'
+            f'<span class="tip" aria-hidden="true">{label}</span></a>'
         )
-    else:
-        storage = (
-            f'<span class="row">{icon("alert", 15)}Memory only</span>'
-            "<span>Approvals are lost when the dashboard stops.</span>"
-        )
-    shown = snap.title or snap.team_name
-    footnote = snap.footnote or "Customer data here is demo data."
-    return f"""<nav class="side" aria-label="Dashboard">
-  <div class="brand">{_LOGO}AgentBuildKit</div>
-  {_switcher(snap)}
-  <div class="teamcard">{e(shown)}<small>{e(snap.team_name)} · {len(snap.agents)} agents,
-{e(provider_text)}</small></div>
-  <div class="nav">{"".join(links)}</div>
-  <div class="sidefoot">{storage}<span>{e(footnote)}</span></div>
+    return f"""<nav class="rail" aria-label="Dashboard">
+  <a class="rail-logo" href="{loc(snap, "/")}" aria-label="AgentBuildKit overview">{_LOGO_LIGHT}</a>
+  <div class="rail-nav">{"".join(links)}</div>
 </nav>"""
+
+
+def _topbar(snap: Snapshot) -> str:
+    updated = datetime.now(UTC).strftime("%H:%M")
+    return f"""<div class="topbar">
+  {_switcher(snap)}
+  <span class="asof"><span class="dot-sm" aria-hidden="true"></span>Updated {updated} UTC</span>
+  <form class="search" method="get" action="{loc(snap, "/runs")}" role="search">
+    {icon("search", 15)}
+    <label class="visually-hidden" for="search-runs">Search runs</label>
+    <input type="search" id="search-runs" name="q" placeholder="Search runs by {
+        e(snap.subject_label.lower())
+    } or run ID" autocomplete="off"><span class="kbd" aria-hidden="true">/</span>
+  </form>
+  {_request_action(snap)}
+</div>"""
+
+
+def _footer(snap: Snapshot) -> str:
+    providers = sorted({agent.provider for agent in snap.agents})
+    provider_text = ", ".join(_provider(p) for p in providers)
+    if snap.persistent:
+        storage = f"{icon('disk', 14)}Saved to disk. Approvals reopen after a restart."
+    else:
+        storage = f"{icon('alert', 14)}Memory only. Approvals are lost when the dashboard stops."
+    footnote = snap.footnote or "Customer data here is demo data."
+    return f"""<footer class="pagefoot">
+  <span>{storage}</span>
+  <span>{e(snap.team_name)}, {len(snap.agents)} agents, {e(provider_text)}.</span>
+  <span>{e(footnote)}</span>
+</footer>"""
 
 
 def layout(snap: Snapshot, *, title: str, current: str, content: str, sheet: str = "") -> str:
@@ -328,7 +400,9 @@ type="font/woff2" crossorigin>
 <div class="app">
 {_sidebar(snap, current)}
 <main class="main" id="content"><div class="wrap">
+{_topbar(snap)}
 {content}
+{_footer(snap)}
 </div></main>
 {sheet}
 </div>
@@ -359,37 +433,45 @@ def _attention(snap: Snapshot) -> str:
         if run.state == "unresolved":
             what = e(run.pause.action) if run.pause and run.pause.action else "a service action"
             rows.append(
-                f"""<div class="attn-row">
-  <span class="badge badge-unres">{icon("help", 18)}</span>
+                f"""<div class="card attn-card">
+  <div class="attn-top"><span class="badge badge-unres">{icon("help", 18)}</span>{
+                    status("unresolved")
+                }</div>
   <div class="attn-text">
     <h3>Unknown outcome for {what} on {e(run.reference or "an unknown account")}</h3>
     <p class="muted sm">It was started, but never confirmed as finished. It won't be sent again.
 Check the business system before acting.</p>
   </div>
-  <a class="btn btn-secondary" href="{run_href(snap, run.correlation_id)}">View run</a>
+  <div class="attn-act"><a class="btn btn-secondary" href="{
+                    run_href(snap, run.correlation_id)
+                }">View run</a></div>
 </div>"""
             )
         elif run.state == "failed":
             rows.append(
-                f"""<div class="attn-row">
-  <span class="badge badge-fail">{icon("alert", 18)}</span>
+                f"""<div class="card attn-card">
+  <div class="attn-top"><span class="badge badge-fail">{icon("alert", 18)}</span>{
+                    status("failed")
+                }</div>
   <div class="attn-text">
     <h3>Service action failed for {e(run.reference or "an unknown account")}</h3>
     <p class="muted sm">The attempt ended with an error and won't be repeated. Check the business
 system if you need to confirm what happened.</p>
   </div>
-  <a class="btn btn-secondary" href="{run_href(snap, run.correlation_id)}">View run</a>
+  <div class="attn-act"><a class="btn btn-secondary" href="{
+                    run_href(snap, run.correlation_id)
+                }">View run</a></div>
 </div>"""
             )
     count = len(rows)
     if not rows:
-        body = """<div class="empty"><h3>Nothing needs attention</h3>
+        body = """<div class="card empty"><h3>Nothing needs attention</h3>
 <p class="muted sm">Approvals and actions with an unknown outcome appear here.</p></div>"""
     else:
-        body = "".join(rows)
+        body = f'<div class="attn-grid">{"".join(rows)}</div>'
     noun = "item" if count == 1 else "items"
-    return f"""<section class="card" aria-labelledby="attention-heading">
-  <div class="card-head"><h2 id="attention-heading">Needs attention</h2><span
+    return f"""<section class="section-block" aria-labelledby="attention-heading">
+  <div class="section-head"><h2 id="attention-heading">Needs attention</h2><span
 class="muted sm">{count} {noun}</span></div>
   {body}
 </section>"""
@@ -409,12 +491,14 @@ def _attention_approval(snap: Snapshot, pause: Pause) -> str:
             f'{e(specialist)} proposed <span class="mono">{e(pause.action)}</span>. '
             f"Nothing has been sent to the business system.{when}"
         )
-    return f"""<div class="attn-row">
-  <span class="badge badge-wait">{icon("clock", 18)}</span>
+    return f"""<div class="card attn-card is-wait">
+  <div class="attn-top"><span class="badge badge-wait">{icon("clock", 18)}</span>{
+        status("waiting")
+    }</div>
   <div class="attn-text"><h3>{title}</h3><p class="muted sm">{text}</p></div>
-  <a class="btn btn-primary"
+  <div class="attn-act"><a class="btn btn-primary"
 href="{loc(snap, "/approvals")}#approval-{e(pause.request.request_id)}">Review and
-decide</a>
+decide</a></div>
 </div>"""
 
 
@@ -438,7 +522,10 @@ def _runs_table(snap: Snapshot, runs: Sequence[Run], *, caption: str) -> str:
         changes = len(run.history)
         extra = f'<div class="xs muted">{changes} status changes</div>' if changes > 1 else ""
         agent = (
-            e(title_name(run.specialist)) if run.specialist else '<span class="muted">None</span>'
+            f'<span class="who">{avatar(snap, run.specialist)}'
+            f"{e(title_name(run.specialist))}</span>"
+            if run.specialist
+            else f'<span class="who">{avatar(snap, "")}<span class="muted">None</span></span>'
         )
         raw = e(run.history[-1].status)
         rows.append(
@@ -460,36 +547,60 @@ scope="col">Outcome</th><th scope="col">Run</th></tr></thead>
 </table></div>"""
 
 
+def _agent_counts(snap: Snapshot, name: str) -> tuple[int, int, int]:
+    """Runs this agent took part in, its tool calls, and refused tool calls, from the audit."""
+    run_ids = {run.correlation_id for run in snap.runs}
+    took_part: set[str] = set()
+    calls = 0
+    refused = 0
+    for item in snap.audit:
+        if item.agent != name or item.correlation_id not in run_ids:
+            continue
+        if item.is_agent_run:
+            took_part.add(item.correlation_id)
+        elif item.category == "tool":
+            if item.approval == "rejected":
+                refused += 1
+            else:
+                calls += 1
+    return len(took_part), calls, refused
+
+
 def _team_summary(snap: Snapshot) -> str:
-    items: list[str] = []
+    cards: list[str] = []
+    total = len(snap.runs)
     for agent in snap.agents:
+        took_part, calls, refused = _agent_counts(snap, agent.name)
         tools = (
             " ".join(f'<code class="tool">{e(tool)}</code>' for tool in agent.tools)
             if agent.tools
-            else '<span class="muted">None</span>'
+            else '<span class="muted">No tools</span>'
         )
-        items.append(
-            f"""<details class="agent">
-  <summary><span class="avatar" aria-hidden="true">{e(agent.name[:1].upper())}</span>
-    <span class="who"><span class="strong">{e(title_name(agent.name))}</span><span
-class="xs muted">{e(agent.role)}</span></span>
-    {icon("chev", 14, "chev")}</summary>
-  <div class="agent-detail">
-    <p class="sm">{e(agent.job)}</p>
-    <dl class="kv tight">
-      <dt>Provider</dt><dd>{e(_provider(agent.provider))}</dd>
-      <dt>Model</dt><dd class="mono">{e(agent.model)}</dd>
-      <dt>Tools</dt><dd>{tools}</dd>
-    </dl>
-  </div>
-</details>"""
+        tone = agent_tone(snap, agent.name)
+        cards.append(
+            f"""<a class="card agent-card" href="{loc(snap, f"/team/{agent.name}")}">
+  <div class="agent-head">{avatar(snap, agent.name, size="lg")}<div><h3>{
+                e(title_name(agent.name))
+            }</h3><p class="xs muted">{e(agent.role)}</p></div></div>
+  <div class="agent-mid">{ring(took_part, total, "of runs", tone)}
+    <dl class="stats">
+      <div><dt>Runs</dt><dd>{took_part}</dd></div>
+      <div><dt>Tool calls</dt><dd>{calls}</dd></div>
+      <div><dt>Refused tools</dt><dd>{refused}</dd></div>
+    </dl></div>
+  <div class="agent-foot"><span>{e(_provider(agent.provider))} <span class="mono">{
+                e(agent.model)
+            }</span></span><span class="agent-tools">{tools}</span></div>
+</a>"""
         )
-    return f"""<section class="card" aria-labelledby="team-heading">
-  <div class="card-head"><h2 id="team-heading">Team</h2>
-<a class="sm" href="{loc(snap, "/team")}">Team
-details</a></div>
-  {"".join(items)}
-  <p class="card-foot">{_team_foot(snap)}</p>
+    return f"""<section class="section-block" aria-labelledby="team-heading">
+  <div class="section-head"><h2 id="team-heading">Team</h2><a class="sm" href="{
+        loc(snap, "/team")
+    }">Team details</a></div>
+  <div class="agent-grid">{"".join(cards)}</div>
+  <p class="xs muted">Counts come from this team's recorded runs and audit events. {
+        _team_foot(snap)
+    }</p>
 </section>"""
 
 
@@ -515,22 +626,48 @@ def _provider(name: str) -> str:
     return {"openai": "OpenAI", "anthropic": "Anthropic"}.get(name, name)
 
 
-def _evaluation_card(snap: Snapshot) -> str:
+def _kpis(snap: Snapshot) -> str:
+    unresolved = sum(1 for run in snap.runs if run.state == "unresolved")
+    failed = sum(1 for run in snap.runs if run.state == "failed")
+    check = unresolved + failed
+    check_note = f"{unresolved} unresolved, {failed} failed" if check else "Nothing to check"
+    if snap.approvals_enabled:
+        waiting = str(len(snap.approvals))
+        waiting_note = "Nothing is sent until you decide"
+    else:
+        waiting = "0"
+        waiting_note = "This team only reads"
     report = snap.report
     if report is None:
-        result = '<p class="muted sm">Not run in this session.</p>'
+        evaluation = '<span class="kpi-val kpi-val-sm">Not run</span>'
+        evaluation_note = _evaluation_note(snap)
     else:
-        result = f'<p class="big-number">{report.passed} of {report.total} passed.</p>'
-    return f"""<section class="card card-pad" aria-labelledby="eval-heading">
-  <div class="row-s"><h2 id="eval-heading">Offline evaluation</h2><span
-class="tag">Scripted</span></div>
-  {result}
-  <p class="xs muted">{_evaluation_note(snap)}</p>
-  <form method="post" action="{loc(snap, "/evaluate")}" data-busy-label="Running evaluation">
-    {hidden_team(snap)}
-    <button class="btn btn-secondary" type="submit">Run evaluation</button>
-  </form>
-  <a class="sm" href="{loc(snap, "/evaluation")}">View scenarios</a>
+        evaluation = (
+            f'<span class="kpi-val">{report.passed}<span class="kpi-of">/{report.total}</span>'
+            "</span>"
+        )
+        evaluation_note = f"{report.passed} of {report.total} passed. {_evaluation_note(snap)}"
+    return f"""<section class="kpis" aria-label="Summary">
+  <div class="card kpi"><span class="kpi-lab"><span class="chipic ci-blue">{
+        icon("list", 15)
+    }</span>Runs recorded</span><span class="kpi-val">{len(snap.runs)}</span><span
+class="kpi-note">For this team</span></div>
+  <div class="card kpi"><span class="kpi-lab"><span class="chipic ci-amber">{
+        icon("clock", 15)
+    }</span>Waiting for you</span><span class="kpi-val">{waiting}</span><span
+class="kpi-note">{waiting_note}</span></div>
+  <div class="card kpi"><span class="kpi-lab"><span class="chipic ci-slate">{
+        icon("help", 15)
+    }</span>Need a check</span><span class="kpi-val">{check}</span><span
+class="kpi-note">{check_note}</span></div>
+  <div class="card kpi"><span class="kpi-lab"><span class="chipic ci-green">{
+        icon("flask", 15)
+    }</span>Offline checks</span>{evaluation}<span class="kpi-note">{evaluation_note}</span>
+  <form class="kpi-act" method="post" action="{loc(snap, "/evaluate")}"
+data-busy-label="Running evaluation">{hidden_team(snap)}<button class="btn btn-secondary btn-sm"
+type="submit">Run evaluation</button><a class="sm" href="{
+        loc(snap, "/evaluation")
+    }">View scenarios</a></form></div>
 </section>"""
 
 
@@ -572,28 +709,24 @@ def overview(snap: Snapshot, query: Mapping[str, str]) -> Page:
         else ""
     )
     content = f"""{banner}
-<header class="head">
+<header class="hero">
   <div class="stack-xs">
-    <div class="titlerow"><h1>{e(title)}</h1>{badge}</div>
+    <h1>{e(title)} at a <em>glance</em></h1>
     <p class="muted">{e(summary)}</p>
   </div>
-  {_request_action(snap)}
+  {badge}
 </header>
+{_kpis(snap)}
 {_attention(snap)}
-<div class="grid-main">
-  <section class="card" aria-labelledby="runs-heading">
-    <div class="card-head">
-      <div><h2 id="runs-heading">Recent runs</h2><p class="xs muted">Newest first. Each row shows
+{_team_summary(snap)}
+<section class="card" aria-labelledby="runs-heading">
+  <div class="card-head">
+    <div><h2 id="runs-heading">Recent runs</h2><p class="xs muted">Newest first. Each row shows
 the latest status of one request.</p></div>
-      {more}
-    </div>
-    {_runs_table(snap, recent, caption="Recent runs")}
-  </section>
-  <div class="stack-l">
-    {_team_summary(snap)}
-    {_evaluation_card(snap)}
+    {more}
   </div>
-</div>"""
+  {_runs_table(snap, recent, caption="Recent runs")}
+</section>"""
     sheet = _sheet(snap, query) if open_sheet else ""
     return Page(
         200, layout(snap, title="Overview", current="Overview", content=content, sheet=sheet)
@@ -700,12 +833,34 @@ send email or edit the sheet.</p>
 # ---------------------------------------------------------------- runs
 
 
-def runs_page(snap: Snapshot) -> Page:
+def _matches(snap: Snapshot, run: Run, needle: str) -> bool:
+    fields = (run.reference, run.correlation_id, run.specialist, run.response)
+    if needle in STATES[run.state].label.lower():
+        return True
+    return any(needle in field.lower() for field in fields)
+
+
+def runs_page(snap: Snapshot, query: Mapping[str, str] | None = None) -> Page:
+    needle = (query or {}).get("q", "").strip()
+    runs = snap.runs
+    found = ""
+    if needle:
+        runs = tuple(run for run in snap.runs if _matches(snap, run, needle.lower()))
+        noun = "run matches" if len(runs) == 1 else "runs match"
+        found = (
+            f'<p class="muted sm">{len(runs)} {noun} <span class="strong">{e(needle)}</span>. '
+            f'<a href="{loc(snap, "/runs")}">Clear search</a></p>'
+        )
+    if needle and not runs:
+        table = f"""<div class="empty"><h3>No runs match</h3>
+<p class="muted sm">Search looks at the {e(snap.subject_label.lower())}, run ID, agent, status and
+outcome.</p><a class="btn btn-secondary" href="{loc(snap, "/runs")}">Clear search</a></div>"""
+    else:
+        table = _runs_table(snap, runs, caption="All runs")
     content = f"""{error_banner(snap.error)}
 <header class="head"><div class="stack-xs"><h1>Runs</h1>
-<p class="muted">Every request for this team, newest first.</p></div>
-{_request_action(snap)}</header>
-<section class="card">{_runs_table(snap, snap.runs, caption="All runs")}</section>"""
+<p class="muted">Every request for this team, newest first.</p>{found}</div></header>
+<section class="card">{table}</section>"""
     return Page(200, layout(snap, title="Runs", current="Runs", content=content))
 
 
@@ -734,11 +889,22 @@ _NODE_WORDS: dict[NodeState, str] = {
 }
 
 
+def _glyph(node: RouteNode) -> str:
+    if node.mono:
+        return icon("spark", 20)
+    if node.name.lower() in {"request", "report", "note"}:
+        return icon("log", 20)
+    if node.name.lower() in {"you", "person"}:
+        return icon("person", 20)
+    return e(node.name[:1].upper())
+
+
 def _node(node: RouteNode, classes: str, *, branch: bool = False) -> str:
     name = f'<span class="mono">{e(node.name)}</span>' if node.mono else e(node.name)
     extra = '<span class="branch" aria-hidden="true"></span>' if branch else ""
     return (
         f'<div class="node is-{node.state} {classes}" role="listitem">{extra}'
+        f'<span class="node-dot" aria-hidden="true">{_glyph(node)}</span>'
         f"<b>{name}</b><small>{e(node.caption)}</small>"
         f'<span class="visually-hidden">, {_NODE_WORDS[node.state]}</span></div>'
     )
@@ -1689,7 +1855,7 @@ def render_page(snap: Snapshot, path: str, query: Mapping[str, str] | None = Non
     if path in {"", "/"}:
         return overview(snap, params)
     if path == "/runs":
-        return runs_page(snap)
+        return runs_page(snap, params)
     if path.startswith("/runs/"):
         correlation_id = path.removeprefix("/runs/")
         if not _CORRELATION.match(correlation_id):

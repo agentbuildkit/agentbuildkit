@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-No product changes since the published 0.2.0 release.
+- The dashboard has a new look: a floating icon rail, a top bar with the team, search and New request, summary tiles, attention cards, a card for each agent with a ring showing the share of this team's recorded runs it took part in, and round route nodes on run pages. Execution, approval, and storage behaviour are unchanged.
+- Runs can be searched by reference, run ID, agent, status, or outcome at `/runs?q=`.
+- Instrument Serif (italic) is bundled with its SIL Open Font Licence file for the overview heading.
 
 ## 0.2.0
 

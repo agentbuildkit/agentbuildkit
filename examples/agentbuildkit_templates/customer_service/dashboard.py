@@ -103,6 +103,7 @@ STATIC_TYPES: dict[str, str] = {
     "fonts/instrument-sans-latin-600-normal.woff2": "font/woff2",
     "fonts/geist-mono-latin-400-normal.woff2": "font/woff2",
     "fonts/geist-mono-latin-500-normal.woff2": "font/woff2",
+    "fonts/instrument-serif-latin-400-italic.woff2": "font/woff2",
 }
 
 

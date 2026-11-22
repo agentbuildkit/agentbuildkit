@@ -78,6 +78,33 @@
     });
   });
 
+  // "/" jumps to run search, unless the person is already typing.
+  var search = document.getElementById("search-runs");
+  if (search) {
+    document.addEventListener("keydown", function (event) {
+      var target = event.target;
+      var typing = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" || target.isContentEditable);
+      if (event.key === "/" && !typing && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        search.focus();
+      }
+    });
+  }
+
+  // Escape closes the team list.
+  document.querySelectorAll("details.teams").forEach(function (menu) {
+    menu.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && menu.open) {
+        menu.open = false;
+        var summary = menu.querySelector("summary");
+        if (summary) {
+          summary.focus();
+        }
+      }
+    });
+  });
+
   // Audit filters apply as soon as a choice changes.
   document.querySelectorAll("form[data-autosubmit] select").forEach(function (select) {
     select.addEventListener("change", function () {

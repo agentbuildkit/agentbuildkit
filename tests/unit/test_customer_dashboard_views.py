@@ -473,3 +473,73 @@ def test_unknown_approval_is_reported_plainly() -> None:
 
     assert final.endswith("/approvals")
     assert "could not be found" in page
+
+
+async def test_overview_summary_and_agent_rings_come_from_recorded_runs() -> None:
+    service = _memory("service-action-pauses-for-approval")
+    try:
+        await service.submit("A-100", "The service request is still open.")
+        overview = _flat(service.render())
+    finally:
+        await service.organisation.aclose()
+
+    assert "at a <em>glance</em>" in overview
+    assert '<span class="kpi-val">1</span><span class="kpi-note">For this team</span>' in overview
+    assert "Nothing is sent until you decide" in overview
+    assert "Nothing to check" in overview
+    assert "Not run" in overview
+    assert 'aria-label="Approvals, 1 waiting"' in overview
+    # Alex, Taylor and Jordan ran in the one recorded run; Sam did not.
+    assert overview.count('aria-label="of runs: 1 of 1"') == 3
+    assert overview.count('aria-label="of runs: 0 of 1"') == 1
+    assert LOCAL_MOCK_TOKEN not in overview
+
+
+async def test_agent_ring_is_empty_before_any_run() -> None:
+    service = _memory("billing-routes-to-sam")
+    try:
+        overview = _flat(service.render())
+    finally:
+        await service.organisation.aclose()
+
+    assert overview.count('aria-label="of runs: 0 of 0"') == 4
+    assert "0%" not in overview
+
+
+async def test_run_search_filters_by_reference_status_and_id() -> None:
+    service = _memory("billing-routes-to-sam")
+    try:
+        outcome = await service.submit("A-100", "Please explain the latest invoice.")
+        by_reference = _flat(service.render("/runs", {"q": "a-100"}))
+        by_id = _flat(service.render("/runs", {"q": outcome.correlation_id[:8]}))
+        by_status = _flat(service.render("/runs", {"q": "completed"}))
+        missing = _flat(service.render("/runs", {"q": "<script>"}))
+    finally:
+        await service.organisation.aclose()
+
+    for page in (by_reference, by_id, by_status):
+        assert "1 run matches" in page
+        assert outcome.correlation_id[:8] in page
+    assert "No runs match" in missing
+    assert "&lt;script&gt;" in missing
+    assert "<script>" not in missing
+
+
+def test_serif_font_is_served_and_licensed() -> None:
+    service = _memory("informational-completes-without-approval")
+    binding = serve(service, port=0)
+    try:
+        url = _url(binding, "/static/fonts/instrument-serif-latin-400-italic.woff2")
+        with urlopen(url, timeout=10) as font:
+            font_type = font.headers["Content-Type"]
+            body = font.read()
+    finally:
+        binding.shutdown()
+
+    licence = (
+        Path(__file__).parents[2]
+        / "examples/agentbuildkit_templates/customer_service/static/fonts/OFL-InstrumentSerif.txt"
+    )
+    assert font_type == "font/woff2"
+    assert body[:4] == b"wOF2"
+    assert "SIL Open Font License" in licence.read_text()
