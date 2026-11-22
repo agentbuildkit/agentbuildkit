@@ -2,6 +2,7 @@
   "name": "agentbuildkit",
   "version": "0.0.3",
   "description": "One-command bootstrapper for AgentBuildKit",
+  "author": "AgentBuildKit",
   "license": "Apache-2.0",
   "homepage": "https://agentbuildkit.com",
   "repository": {

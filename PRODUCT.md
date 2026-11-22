@@ -40,7 +40,7 @@ Model + Harness = Agent. Deterministic Python owns routing, tool permission and 
 
 ## Brand Commitments
 
-- Name: AgentBuildKit. Open source under Apache 2.0. Credit line "Built by Gian Luzio".
+- Name: AgentBuildKit. Open source under Apache 2.0. The project author is AgentBuildKit.
 - Current headline on agentbuildkit.com: "Build agents you trust". The README still uses "Build agents. Not demos."
 - Logo: the "Courses" mark, an A built from stacked courses with the Signal Blue crossbar. Logo kit and usage guide are in the AgentBuildKit project files.
 - The dashboard follows the website palette: Ice White #F5F7FA background, Soft Slate Blue #EBF0F5 surfaces, Ink #0F141C text, Muted Blue-Gray #5C6B7A secondary text, Brand Blue #2B4CF2 primary, Deep Charcoal #111111 secondary. Warm cream backgrounds were rejected as looking AI-generated.

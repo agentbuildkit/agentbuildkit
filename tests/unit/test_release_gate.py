@@ -82,6 +82,19 @@ def test_archive_scan_rejects_state_and_requires_templates(tmp_path: Path) -> No
     problems = archive_problems(wheel, templates=True)
     assert any(item.startswith("banned path:") for item in problems)
 
+    source = tmp_path / "agentbuildkit-0.2.0.tar.gz"
+    import io
+    import tarfile
+
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w:gz") as archive:
+        data = b"{}"
+        info = tarfile.TarInfo("agentbuildkit-0.2.0/.impeccable/config.json")
+        info.size = len(data)
+        archive.addfile(info, io.BytesIO(data))
+    source.write_bytes(payload.getvalue())
+    assert archive_problems(source, templates=False) == ["banned path: .impeccable/config.json"]
+
 
 def test_manifest_rejects_a_changed_artifact(tmp_path: Path) -> None:
     names = (

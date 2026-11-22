@@ -158,6 +158,6 @@ def archive_problems(path: Path, *, templates: bool) -> list[str]:
 def _banned(name: str) -> bool:
     parts = name.lower().split("/")
     basename = parts[-1]
-    if "__pycache__" in parts or "credentials" in basename:
+    if "__pycache__" in parts or ".impeccable" in parts or "credentials" in basename:
         return True
     return basename.endswith(_BANNED_SUFFIXES)

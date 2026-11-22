@@ -6,6 +6,8 @@ readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
+authors = [{ name = "AgentBuildKit" }]
+maintainers = [{ name = "AgentBuildKit" }]
 dependencies = ["agentbuildkit>=0.2.0,<0.3.0"]
 
 [tool.uv.sources]

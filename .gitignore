@@ -25,5 +25,8 @@ traces/
 *.sqlite-shm
 *.db
 
+# Local design-tool state. It is not part of the release.
+.impeccable/
+
 # OS and editors
 .DS_Store
