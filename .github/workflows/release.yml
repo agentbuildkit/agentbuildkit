@@ -202,6 +202,8 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
+      - name: Install the npm release that can use trusted publishing
+        run: npm install -g npm@11.5.1
       - name: Compare the validated tarball and stop on a mismatch
         id: remote
         run: node scripts/release_npm.js candidate/agentbuildkit-0.0.3.tgz

@@ -186,6 +186,9 @@ def test_publish_workflow_reuses_the_validated_candidate() -> None:
     npm_job = text.split("  publish-npm:", 1)[1].split("  verify-npm:", 1)[0]
     assert "release_publish.py npm-bridge candidate" in npm_job
     assert "require-match" not in npm_job
+    assert npm_job.index("npm install -g npm@11.5.1") < npm_job.index(
+        'npm publish --provenance --access public "$tarball"'
+    )
     assert "release_publish.py harness candidate require-match" in text
     assert "release_publish.py templates candidate require-match" in text
 
