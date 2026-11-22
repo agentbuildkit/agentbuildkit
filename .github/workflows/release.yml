@@ -206,11 +206,11 @@ jobs:
         run: npm install -g npm@11.5.1
       - name: Compare the validated tarball and stop on a mismatch
         id: remote
-        run: node scripts/release_npm.js candidate/agentbuildkit-0.0.3.tgz
+        run: node scripts/release_npm.js candidate/agentbuildkit-0.0.4.tgz
       - name: Publish the validated tarball when it is absent
         if: steps.remote.outputs.decision == 'absent'
         run: |
-          tarball="${GITHUB_WORKSPACE}/candidate/agentbuildkit-0.0.3.tgz"
+          tarball="${GITHUB_WORKSPACE}/candidate/agentbuildkit-0.0.4.tgz"
           test -f "$tarball"
           PYTHONPATH=. python - << 'PY'
           import hashlib
@@ -218,7 +218,7 @@ jobs:
           import os
           from pathlib import Path
 
-          tarball = Path(os.environ["GITHUB_WORKSPACE"]) / "candidate" / "agentbuildkit-0.0.3.tgz"
+          tarball = Path(os.environ["GITHUB_WORKSPACE"]) / "candidate" / "agentbuildkit-0.0.4.tgz"
           if not tarball.is_file():
               raise SystemExit("The validated npm tarball is not a regular file.")
           manifest = json.loads((tarball.parent / "manifest.json").read_text(encoding="utf-8"))
@@ -269,6 +269,6 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - name: Require the public tarball to match the candidate
-        run: node scripts/release_npm.js candidate/agentbuildkit-0.0.3.tgz --require-match
+        run: node scripts/release_npm.js candidate/agentbuildkit-0.0.4.tgz --require-match
       - name: Run the published help command
-        run: npx --yes agentbuildkit@0.0.3 --help
+        run: npx --yes agentbuildkit@0.0.4 --help

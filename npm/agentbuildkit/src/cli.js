@@ -63,10 +63,9 @@ function parseArgs(argv, env = process.env) {
 function helpText() {
   return [
     "AgentBuildKit",
-    "Build agents. Not demos.",
+    "Build Agents You Trust",
     "",
     "Install the Python harness and the first-party templates.",
-    "The upcoming 0.2.0 release is not the published npm 0.0.2 package.",
     "",
     "Usage:",
     "  npx agentbuildkit",
@@ -109,7 +108,7 @@ function helpText() {
 async function bootstrap(options) {
   const log = options.log;
   log("AgentBuildKit");
-  log("Build agents. Not demos.");
+  log("Build Agents You Trust");
   log("");
   log("Checking your system...");
   log("");

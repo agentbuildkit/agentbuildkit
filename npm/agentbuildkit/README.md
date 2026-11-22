@@ -6,7 +6,7 @@ Bootstrapper for [AgentBuildKit](https://agentbuildkit.com).
 
 AgentBuildKit is an open-source harness for building, running and governing AI agent teams. This package is the Node installer. The harness and the templates are Python.
 
-The current published release is npm `agentbuildkit` 0.0.3. It installs PyPI `agentbuildkit` 0.2.0 and `agentbuildkit-templates` 0.2.0. npm `0.0.2` remains available and installs the harness only.
+The current published release is npm `agentbuildkit` 0.0.4. It installs PyPI `agentbuildkit` 0.2.0 and `agentbuildkit-templates` 0.2.0. npm `0.0.3` and `0.0.2` remain available. `0.0.2` installs the harness only.
 
 ```bash
 npx agentbuildkit
@@ -46,8 +46,6 @@ node npm/agentbuildkit/bin/agentbuildkit.js --source local --no-demo --no-dashbo
 ```
 
 `AGENTBUILDKIT_SOURCE` accepts the same values as `--source`.
-
-The published 0.0.3 package prints the previous tagline in `--help`, together with a sentence written before publication. The installer behaviour above is the behaviour of that published package.
 
 ## After installation
 

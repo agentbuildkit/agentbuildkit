@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-No product changes since the published 0.2.0 release.
+No unpublished product changes.
+
+## npm 0.0.4
+
+- The installer greeting and help text use "Build Agents You Trust". npm 0.0.3 remains published with the previous greeting. Python packages stay at 0.2.0.
 
 ## 0.2.0
 

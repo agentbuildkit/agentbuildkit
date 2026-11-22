@@ -12,7 +12,7 @@ from pathlib import Path
 HARNESS_VERSION = "0.2.0"
 TEMPLATES_VERSION = "0.2.0"
 HARNESS_BOUND = "agentbuildkit>=0.2.0,<0.3.0"
-NPM_VERSION = "0.0.3"
+NPM_VERSION = "0.0.4"
 
 _BANNED_SUFFIXES = (".env", ".sqlite", ".db", ".bak", ".pyc")
 _TEMPLATE_PATHS = (

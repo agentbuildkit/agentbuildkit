@@ -1,6 +1,6 @@
 {
   "name": "agentbuildkit",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "One-command bootstrapper for AgentBuildKit",
   "author": "AgentBuildKit",
   "license": "Apache-2.0",

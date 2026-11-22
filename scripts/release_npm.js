@@ -2,7 +2,7 @@ const { createHash } = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 
-const VERSION = "0.0.3";
+const VERSION = "0.0.4";
 
 function decide(localSha, remoteSha) {
   if (!remoteSha) {
@@ -54,7 +54,7 @@ function main(argv) {
   const decision = decide(tarballShasum(file), remoteShasum());
   if (decision === "conflict") {
     throw new Error(
-      "npm 0.0.3 is already published and does not match the validated tarball. Stop for review.",
+      `npm ${VERSION} is already published and does not match the validated tarball. Stop for review.`,
     );
   }
   if (requireMatch && decision !== "match") {

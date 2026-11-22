@@ -41,8 +41,8 @@ def test_a_partial_file_list_is_a_conflict() -> None:
 
 
 def test_prepared_versions_match() -> None:
-    assert versions_match("0.2.0", "0.2.0", "0.0.3", HARNESS_BOUND)
-    assert not versions_match("0.1.0", "0.2.0", "0.0.3", HARNESS_BOUND)
+    assert versions_match("0.2.0", "0.2.0", "0.0.4", HARNESS_BOUND)
+    assert not versions_match("0.1.0", "0.2.0", "0.0.4", HARNESS_BOUND)
 
 
 def test_remote_digest_map_uses_sha256() -> None:
@@ -104,7 +104,7 @@ def test_manifest_rejects_a_changed_artifact(tmp_path: Path) -> None:
         "agentbuildkit-0.2.0.tar.gz",
         "agentbuildkit_templates-0.2.0-py3-none-any.whl",
         "agentbuildkit_templates-0.2.0.tar.gz",
-        "agentbuildkit-0.0.3.tgz",
+        "agentbuildkit-0.0.4.tgz",
     )
     for name in names:
         (tmp_path / name).write_bytes(name.encode())
@@ -178,7 +178,7 @@ def test_publish_workflow_reuses_the_validated_candidate() -> None:
     assert "npm pack" not in text
     assert "download-artifact" in text
     assert "is not an approval" in text
-    assert 'tarball="${GITHUB_WORKSPACE}/candidate/agentbuildkit-0.0.3.tgz"' in text
+    assert 'tarball="${GITHUB_WORKSPACE}/candidate/agentbuildkit-0.0.4.tgz"' in text
     assert 'test -f "$tarball"' in text
     assert 'npm publish --provenance --access public "$tarball"' in text
     assert "npm publish --provenance --access public candidate/" not in text
@@ -215,7 +215,7 @@ def test_npm_bridge_keeps_the_original_bytes_and_allows_the_workflow_archive(
         "agentbuildkit-0.2.0.tar.gz": b"workflow-only-sdist",
         "agentbuildkit_templates-0.2.0-py3-none-any.whl": b"templates-wheel",
         "agentbuildkit_templates-0.2.0.tar.gz": b"templates-sdist",
-        "agentbuildkit-0.0.3.tgz": b"npm-tarball",
+        "agentbuildkit-0.0.4.tgz": b"npm-tarball",
     }
     digests = {name: _digest(data) for name, data in files.items()}
     digests["agentbuildkit-0.2.0.tar.gz"] = _digest(b"original-sdist")
@@ -237,6 +237,8 @@ def test_npm_bridge_keeps_the_original_bytes_and_allows_the_workflow_archive(
 
     monkeypatch.setattr("scripts.release_publish.fetch_json", fake_json)
     verify_npm_bridge(tmp_path)
-    (tmp_path / "agentbuildkit-0.0.3.tgz").write_bytes(b"different-tarball")
+    (tmp_path / "agentbuildkit-0.0.4.tgz").write_bytes(b"different-tarball")
+    verify_npm_bridge(tmp_path)
+    (tmp_path / "agentbuildkit-0.2.0-py3-none-any.whl").write_bytes(b"different-wheel")
     with pytest.raises(SystemExit, match="does not match the original validated release"):
         verify_npm_bridge(tmp_path)

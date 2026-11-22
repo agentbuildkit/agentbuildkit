@@ -11,15 +11,15 @@ import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
 
-from scripts.release_gate import classify_release
+from scripts.release_gate import NPM_VERSION, classify_release
 
 _HARNESS_URL = "https://pypi.org/pypi/agentbuildkit/0.2.0/json"
 _TEMPLATES_URL = "https://pypi.org/pypi/agentbuildkit-templates/0.2.0/json"
 
-# This authorizes only the npm 0.0.3 publication for the already published
-# 0.2.0 Python release. It does not allow a different wheel, template archive,
-# or npm tarball, and it does not republish Python.
-NPM_BRIDGE_AUTHORIZATION = "publish-npm-0.0.3"
+# This authorizes the current npm publication while the published Python 0.2.0
+# files stay unchanged. It does not allow a different wheel or template archive,
+# and it does not republish Python. The npm tarball is the validated candidate.
+NPM_BRIDGE_AUTHORIZATION = "publish-npm-0.0.4"
 ORIGINAL_RELEASE_DIGESTS: dict[str, str] = {
     "agentbuildkit-0.2.0-py3-none-any.whl": (
         "b42c49f0ce7d4a38fa1cca89f902fe06beb6b36ed2c507f1b4c08542ab2b60fa"
@@ -33,13 +33,11 @@ ORIGINAL_RELEASE_DIGESTS: dict[str, str] = {
     "agentbuildkit_templates-0.2.0.tar.gz": (
         "873030192f3eefad10d1253829dad97679522599dbc066e903c41ba2a28daeae"
     ),
-    "agentbuildkit-0.0.3.tgz": ("f6997809d69db14c2e6c5f4ec223c915c671a70bd4fb8c8e750a83a450fc3551"),
 }
 _CANDIDATE_MUST_MATCH = (
     "agentbuildkit-0.2.0-py3-none-any.whl",
     "agentbuildkit_templates-0.2.0-py3-none-any.whl",
     "agentbuildkit_templates-0.2.0.tar.gz",
-    "agentbuildkit-0.0.3.tgz",
 )
 
 
@@ -113,11 +111,11 @@ def _published_python(package: str) -> dict[str, str]:
 
 
 def verify_npm_bridge(directory: Path) -> None:
-    """Accept the workflow-only source-archive change for this npm publication.
+    """Publish the validated npm candidate without replacing Python 0.2.0.
 
-    PyPI must still serve the original 0.2.0 files. The candidate wheel, template
-    archives, and npm tarball must be those same bytes. The candidate harness
-    source archive is not published and may contain the corrected workflow.
+    PyPI must still serve the original 0.2.0 files. The candidate wheel and
+    template archives must be those same bytes. The npm tarball is this
+    commit's validated candidate. The harness source archive is not published.
     """
     for package, url in (("harness", _HARNESS_URL), ("templates", _TEMPLATES_URL)):
         remote = fetch_json(url)
@@ -139,6 +137,9 @@ def verify_npm_bridge(directory: Path) -> None:
     source_archive = directory / "agentbuildkit-0.2.0.tar.gz"
     if not source_archive.is_file():
         raise SystemExit("The candidate harness source archive is missing.")
+    tarball = directory / f"agentbuildkit-{NPM_VERSION}.tgz"
+    if not tarball.is_file():
+        raise SystemExit("The validated npm tarball is not a regular file.")
     print(NPM_BRIDGE_AUTHORIZATION)
 
 

@@ -10,7 +10,7 @@ const secret = "sk-bootstrap-secret";
 test("package reserves the agentbuildkit command", () => {
   const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
   assert.equal(pkg.name, "agentbuildkit");
-  assert.equal(pkg.version, "0.0.3");
+  assert.equal(pkg.version, "0.0.4");
   assert.equal(pkg.description, "One-command bootstrapper for AgentBuildKit");
   assert.equal(pkg.bin.agentbuildkit, "bin/agentbuildkit.js");
   assert.deepEqual(pkg.files, ["bin/agentbuildkit.js", "src"]);
@@ -33,6 +33,8 @@ test("help is local and does not print secrets", () => {
   });
   assert.equal(result.status, 0);
   assert.equal(result.stderr, "");
+  assert.match(result.stdout, /Build Agents You Trust/);
+  assert.equal(result.stdout.includes("Build agents. Not demos."), false);
   assert.match(result.stdout, /npx agentbuildkit/);
   assert.match(result.stdout, /--no-demo/);
   assert.match(result.stdout, /--no-dashboard/);
