@@ -50,7 +50,7 @@ Model + Harness = Agent. Deterministic Python owns routing, tool permission and 
 
 - Offline demo (`agentkit demo`) and the customer-service example with its dashboard.
 - 13 scripted evaluation scenarios in `examples/agentbuildkit_templates/customer_service/evaluation.py`, plus the unit test suite under `tests/unit`.
-- Published releases: PyPI `agentbuildkit` 0.2.0, PyPI `agentbuildkit-templates` 0.2.0, and npm `agentbuildkit` 0.0.3. PyPI `agentbuildkit` 0.1.0 and npm `agentbuildkit` 0.0.2 remain available and install the harness only.
+- Published releases: PyPI `agentbuildkit` 0.2.0, PyPI `agentbuildkit-templates` 0.2.0, and npm `agentbuildkit` 0.0.4. PyPI `agentbuildkit` 0.1.0 remains available and installs the harness only. npm `0.0.3` and `0.0.2` remain available. `0.0.2` installs the harness only.
 - Fixture data only: reference A-100, account name Northwind, mock business API at `http://business.test`.
 - Absent, and must not be fabricated: customers, testimonials, case studies, benchmarks, production deployments, live CRM integrations, token costs or timings the backend does not record.
 

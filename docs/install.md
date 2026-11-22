@@ -1,7 +1,7 @@
 # Install
 
 The current public release is PyPI `agentbuildkit` 0.2.0, PyPI
-`agentbuildkit-templates` 0.2.0, and npm `agentbuildkit` 0.0.3.
+`agentbuildkit-templates` 0.2.0, and npm `agentbuildkit` 0.0.4.
 
 `agentbuildkit` 0.2.0 is the harness. `agentbuildkit-templates` 0.2.0 is the
 first-party package. Its import name is `agentbuildkit_templates`. The
@@ -25,7 +25,7 @@ lock are unchanged.
 Default npm installation and dashboard launch:
 
 ```bash
-npx agentbuildkit@0.0.3
+npx agentbuildkit
 ```
 
 An interactive terminal explains the state directory, offers the local
@@ -64,11 +64,11 @@ agentkit mcp serve --state-directory /ABSOLUTE/PATH/agentbuildkit-state
 
 MCP requires an absolute path and does not read `APP_STATE_DIRECTORY`.
 
-Upgrading a harness-only installation. npm 0.0.3 detects a tool install that
+Upgrading a harness-only installation. npm 0.0.4 detects a tool install that
 does not report the templates package and reinstalls both:
 
 ```bash
-npx agentbuildkit@0.0.3
+npx agentbuildkit
 ```
 
 The same upgrade through Python:
@@ -184,7 +184,7 @@ entry. See [MCP](mcp.md). Claude Desktop was not tested.
 
 ## npm bootstrapper
 
-`npx agentbuildkit` resolves to npm 0.0.3. It installs
+`npx agentbuildkit` resolves to npm 0.0.4. It installs
 `agentbuildkit>=0.2.0,<0.3.0` and `agentbuildkit-templates>=0.2.0,<0.3.0`,
 runs `agentkit doctor`, explains the state directory, and can open the
 dashboard in the foreground. It does not install Composio or Foundry and it

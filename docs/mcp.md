@@ -20,7 +20,7 @@ unavailable. Windows has not been verified. Harness commands that do not open
 that lock are unchanged.
 
 `agentkit mcp` is included in the published `agentbuildkit` 0.2.0 and
-`agentbuildkit-templates` 0.2.0 pair. npm `agentbuildkit` 0.0.3 installs that
+`agentbuildkit-templates` 0.2.0 pair. npm `agentbuildkit` 0.0.4 installs that
 pair. The older `agentbuildkit` 0.1.0 release and npm `agentbuildkit` 0.0.2
 install the harness only. A checkout command uses this repository. An
 installed command uses the published packages. See [Install](install.md).

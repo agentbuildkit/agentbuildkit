@@ -6,6 +6,10 @@
 - Runs can be searched by reference, run ID, agent, status, or outcome at `/runs?q=`.
 - Instrument Serif (italic) is bundled with its SIL Open Font Licence file for the overview heading.
 
+## npm 0.0.4
+
+- The installer greeting and help text use "Build Agents You Trust". npm 0.0.3 remains published with the previous greeting. Python packages stay at 0.2.0.
+
 ## 0.2.0
 
 Published on 22 November 2026.
